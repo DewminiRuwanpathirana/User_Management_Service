@@ -20,14 +20,9 @@ const (
 
 const defaultTimeout = 5 * time.Second
 
-type ServiceError struct {
-	Code    string
-	Message string
-}
-
-func (e *ServiceError) Error() string {
-	return fmt.Sprintf("users service error (%s): %s", e.Code, e.Message)
-}
+var ErrBadRequest = errors.New("users client bad request")
+var ErrNotFound = errors.New("users client not found")
+var ErrService = errors.New("users client service error")
 
 type Client interface {
 	// Validation should stay in api-gateway before calling this client.
@@ -159,12 +154,16 @@ func request[T any, R any](ctx context.Context, c *NATSClient, subject string, r
 
 	if !resp.OK {
 		if resp.Error != nil {
-			return nil, &ServiceError{
-				Code:    resp.Error.Code,
-				Message: resp.Error.Message,
+			switch resp.Error.Code {
+			case "BAD_REQUEST":
+				return nil, fmt.Errorf("%w: %s", ErrBadRequest, resp.Error.Message)
+			case "NOT_FOUND":
+				return nil, fmt.Errorf("%w: %s", ErrNotFound, resp.Error.Message)
+			default:
+				return nil, fmt.Errorf("%w (%s): %s", ErrService, resp.Error.Code, resp.Error.Message)
 			}
 		}
-		return nil, errors.New("users service error")
+		return nil, ErrService
 	}
 
 	return &resp, nil

@@ -112,7 +112,7 @@ func mapClientError(err error) error {
 		return ErrUserNotFound
 	case strings.Contains(text, "BAD_REQUEST"):
 		return ErrInvalidInput
+	default:
+		return err
 	}
-
-	return err
 }

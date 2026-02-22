@@ -63,7 +63,6 @@ func (h *UserHandler) ListUsers(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.broadcast("user.listed", users)
 	writeJSON(w, http.StatusOK, users)
 }
 
@@ -86,7 +85,6 @@ func (h *UserHandler) GetUserByID(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.broadcast("user.got", foundUser)
 	writeJSON(w, http.StatusOK, foundUser)
 }
 
