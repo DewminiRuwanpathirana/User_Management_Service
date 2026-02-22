@@ -23,7 +23,7 @@ func NewSQLCRepository(queries *db.Queries) *SQLCRepository {
 	return &SQLCRepository{queries: queries}
 }
 
-func (r *SQLCRepository) Create(ctx context.Context, input CreateUserInput) (User, error) {
+func (r *SQLCRepository) Create(ctx context.Context, input CreateUserInput) (*User, error) {
 	params := db.CreateUserParams{
 		FirstName: input.FirstName,
 		LastName:  input.LastName,
@@ -43,13 +43,14 @@ func (r *SQLCRepository) Create(ctx context.Context, input CreateUserInput) (Use
 	if err != nil {
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
-			return User{}, ErrEmailAlreadyExists
+			return nil, ErrEmailAlreadyExists
 		}
 
-		return User{}, err
+		return nil, err
 	}
 
-	return mapDBUser(created), nil
+	result := mapDBUser(created)
+	return &result, nil
 }
 
 func (r *SQLCRepository) List(ctx context.Context) ([]User, error) {
@@ -66,28 +67,29 @@ func (r *SQLCRepository) List(ctx context.Context) ([]User, error) {
 	return users, nil
 }
 
-func (r *SQLCRepository) GetByID(ctx context.Context, userID string) (User, error) {
+func (r *SQLCRepository) GetByID(ctx context.Context, userID string) (*User, error) {
 	pgUserID, err := toPGUUID(userID)
 	if err != nil {
-		return User{}, err
+		return nil, err
 	}
 
 	found, err := r.queries.GetUserByID(ctx, pgUserID)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return User{}, ErrUserNotFound
+			return nil, ErrUserNotFound
 		}
 
-		return User{}, err
+		return nil, err
 	}
 
-	return mapDBUser(found), nil
+	result := mapDBUser(found)
+	return &result, nil
 }
 
-func (r *SQLCRepository) Update(ctx context.Context, userID string, input UpdateUserInput) (User, error) {
+func (r *SQLCRepository) Update(ctx context.Context, userID string, input UpdateUserInput) (*User, error) {
 	pgUserID, err := toPGUUID(userID)
 	if err != nil {
-		return User{}, err
+		return nil, err
 	}
 
 	params := db.UpdateUserParams{
@@ -117,17 +119,18 @@ func (r *SQLCRepository) Update(ctx context.Context, userID string, input Update
 	if err != nil {
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
-			return User{}, ErrEmailAlreadyExists
+			return nil, ErrEmailAlreadyExists
 		}
 
 		if errors.Is(err, pgx.ErrNoRows) {
-			return User{}, ErrUserNotFound
+			return nil, ErrUserNotFound
 		}
 
-		return User{}, err
+		return nil, err
 	}
 
-	return mapDBUser(updated), nil
+	result := mapDBUser(updated)
+	return &result, nil
 }
 
 func (r *SQLCRepository) Delete(ctx context.Context, userID string) error {

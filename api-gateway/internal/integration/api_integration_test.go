@@ -53,7 +53,7 @@ func TestIntegrationCreateGetDeleteUser(t *testing.T) {
 	queries := db.New(pool)
 	repo := user.NewSQLCRepository(queries)
 	service := user.NewService(repo)
-	handler := httpapi.NewUserHandler(service)
+	handler := httpapi.NewUserHandler(service, nil)
 
 	router := chi.NewRouter()
 	router.Post("/users", handler.CreateUser)

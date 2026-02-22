@@ -13,3 +13,9 @@ services:
       interval: 5s
       timeout: 5s
       retries: 10
+
+  nats:
+    image: nats:2.11-alpine
+    restart: unless-stopped
+    ports:
+      - "4222:4222"

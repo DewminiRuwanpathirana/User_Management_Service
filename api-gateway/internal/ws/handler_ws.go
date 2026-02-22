@@ -12,12 +12,14 @@ import (
 
 type Handler struct {
 	service  *user.Service
+	hub      *Hub
 	upgrader websocket.Upgrader
 }
 
-func NewHandler(service *user.Service) *Handler {
+func NewHandler(service *user.Service, hub *Hub) *Handler {
 	return &Handler{
 		service: service,
+		hub:     hub,
 		upgrader: websocket.Upgrader{
 			CheckOrigin: func(_ *http.Request) bool { return true },
 		},
@@ -29,7 +31,8 @@ func (h *Handler) Handle(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		return
 	}
-	defer conn.Close()
+	client := h.hub.register(conn)
+	defer h.hub.unregister(client)
 
 	for {
 		var req RequestMessage
@@ -37,9 +40,12 @@ func (h *Handler) Handle(w http.ResponseWriter, r *http.Request) {
 			break
 		}
 
-		if err := conn.WriteJSON(h.process(r.Context(), req)); err != nil {
+		resp := h.process(r.Context(), req)
+		if err := client.writeJSON(resp); err != nil {
 			break
 		}
+
+		h.broadcastAction(req.Action, resp, client)
 	}
 }
 
@@ -162,4 +168,32 @@ func failFromError(requestID string, err error) ResponseMessage {
 	default:
 		return fail(requestID, "internal_error", "internal server error")
 	}
+}
+
+func (h *Handler) broadcastAction(action string, resp ResponseMessage, sender *clientConn) {
+	if !resp.OK {
+		return
+	}
+
+	eventType := ""
+	switch action {
+	case "user.create":
+		eventType = "user.created"
+	case "user.update":
+		eventType = "user.updated"
+	case "user.delete":
+		eventType = "user.deleted"
+	default:
+		return
+	}
+
+	payload, err := json.Marshal(map[string]any{
+		"type": eventType,
+		"data": resp.Data,
+	})
+	if err != nil {
+		return
+	}
+
+	h.hub.BroadcastExcept(payload, sender)
 }

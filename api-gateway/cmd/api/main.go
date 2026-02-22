@@ -27,7 +27,6 @@ func main() {
 		dbURL = defaultDatabaseURL
 	}
 
-	// connect to database
 	dbPool, err := pgxpool.New(context.Background(), dbURL)
 	if err != nil {
 		log.Fatalf("failed to connect to database: %v", err)
@@ -38,8 +37,9 @@ func main() {
 	queries := db.New(dbPool)
 	userRepo := user.NewSQLCRepository(queries)
 	userService := user.NewService(userRepo)
-	userHandler := httpapi.NewUserHandler(userService)
-	wsHandler := ws.NewHandler(userService)
+	wsHub := ws.NewHub()
+	userHandler := httpapi.NewUserHandler(userService, wsHub)
+	wsHandler := ws.NewHandler(userService, wsHub)
 
 	router := chi.NewRouter()
 

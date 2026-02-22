@@ -11,16 +11,16 @@ const testUserID = "550e8400-e29b-41d4-a716-446655440000"
 type testRepository struct {
 	createCalled bool
 	createInput  CreateUserInput
-	createResult User
+	createResult *User
 	createErr    error
 
 	updateCalled bool
 	updateInput  UpdateUserInput
-	updateResult User
+	updateResult *User
 	updateErr    error
 }
 
-func (r *testRepository) Create(ctx context.Context, input CreateUserInput) (User, error) {
+func (r *testRepository) Create(ctx context.Context, input CreateUserInput) (*User, error) {
 	r.createCalled = true
 	r.createInput = input
 	return r.createResult, r.createErr
@@ -30,11 +30,11 @@ func (r *testRepository) List(ctx context.Context) ([]User, error) {
 	return nil, nil
 }
 
-func (r *testRepository) GetByID(ctx context.Context, userID string) (User, error) {
-	return User{}, nil
+func (r *testRepository) GetByID(ctx context.Context, userID string) (*User, error) {
+	return nil, nil
 }
 
-func (r *testRepository) Update(ctx context.Context, userID string, input UpdateUserInput) (User, error) {
+func (r *testRepository) Update(ctx context.Context, userID string, input UpdateUserInput) (*User, error) {
 	r.updateCalled = true
 	r.updateInput = input
 	return r.updateResult, r.updateErr
@@ -101,7 +101,7 @@ func TestServiceUpdateUserEmptyPayload(t *testing.T) {
 func TestServiceUpdateUserCallsRepository(t *testing.T) {
 	firstName := "Alice"
 	repo := &testRepository{
-		updateResult: User{UserID: testUserID, FirstName: "Alice"},
+		updateResult: &User{UserID: testUserID, FirstName: "Alice"},
 	}
 	service := NewService(repo)
 
@@ -114,7 +114,7 @@ func TestServiceUpdateUserCallsRepository(t *testing.T) {
 	if !repo.updateCalled {
 		t.Fatal("expected repository update to be called")
 	}
-	if out.FirstName != "Alice" {
-		t.Fatalf("expected updated firstName Alice, got %s", out.FirstName)
+	if out == nil || out.FirstName != "Alice" {
+		t.Fatalf("expected updated firstName Alice, got %v", out)
 	}
 }

@@ -15,22 +15,22 @@ import (
 const testUserID = "550e8400-e29b-41d4-a716-446655440000"
 
 type testRepository struct {
-	createResult user.User
+	createResult *user.User
 	createErr    error
 	listResult   []user.User
 	listErr      error
-	getResult    user.User
+	getResult    *user.User
 	getErr       error
 }
 
-func (r *testRepository) Create(ctx context.Context, input user.CreateUserInput) (user.User, error) {
+func (r *testRepository) Create(ctx context.Context, input user.CreateUserInput) (*user.User, error) {
 	if r.createErr != nil {
-		return user.User{}, r.createErr
+		return nil, r.createErr
 	}
 
 	out := r.createResult
-	if out.UserID == "" {
-		out = user.User{
+	if out == nil || out.UserID == "" {
+		out = &user.User{
 			UserID:    testUserID,
 			FirstName: input.FirstName,
 			LastName:  input.LastName,
@@ -46,12 +46,12 @@ func (r *testRepository) List(ctx context.Context) ([]user.User, error) {
 	return r.listResult, r.listErr
 }
 
-func (r *testRepository) GetByID(ctx context.Context, userID string) (user.User, error) {
+func (r *testRepository) GetByID(ctx context.Context, userID string) (*user.User, error) {
 	return r.getResult, r.getErr
 }
 
-func (r *testRepository) Update(ctx context.Context, userID string, input user.UpdateUserInput) (user.User, error) {
-	return user.User{}, nil
+func (r *testRepository) Update(ctx context.Context, userID string, input user.UpdateUserInput) (*user.User, error) {
+	return nil, nil
 }
 
 func (r *testRepository) Delete(ctx context.Context, userID string) error {
@@ -61,7 +61,7 @@ func (r *testRepository) Delete(ctx context.Context, userID string) error {
 func TestCreateUserHandlerInvalidJSON(t *testing.T) {
 	repo := &testRepository{}
 	service := user.NewService(repo)
-	handler := NewUserHandler(service)
+	handler := NewUserHandler(service, nil)
 
 	req := httptest.NewRequest(http.MethodPost, "/users", bytes.NewBufferString("{invalid"))
 	res := httptest.NewRecorder()
@@ -76,7 +76,7 @@ func TestCreateUserHandlerInvalidJSON(t *testing.T) {
 func TestCreateUserHandlerSuccess(t *testing.T) {
 	repo := &testRepository{}
 	service := user.NewService(repo)
-	handler := NewUserHandler(service)
+	handler := NewUserHandler(service, nil)
 
 	body := map[string]any{
 		"firstName": "John",
@@ -99,7 +99,7 @@ func TestCreateUserHandlerSuccess(t *testing.T) {
 func TestCreateUserHandlerValidationError(t *testing.T) {
 	repo := &testRepository{}
 	service := user.NewService(repo)
-	handler := NewUserHandler(service)
+	handler := NewUserHandler(service, nil)
 
 	body := map[string]any{
 		"firstName": "J",
@@ -126,7 +126,7 @@ func TestListUsersHandlerSuccess(t *testing.T) {
 		},
 	}
 	service := user.NewService(repo)
-	handler := NewUserHandler(service)
+	handler := NewUserHandler(service, nil)
 
 	req := httptest.NewRequest(http.MethodGet, "/users", nil)
 	res := httptest.NewRecorder()
@@ -141,7 +141,7 @@ func TestListUsersHandlerSuccess(t *testing.T) {
 func TestGetUserByIDHandlerNotFound(t *testing.T) {
 	repo := &testRepository{getErr: user.ErrUserNotFound}
 	service := user.NewService(repo)
-	handler := NewUserHandler(service)
+	handler := NewUserHandler(service, nil)
 
 	req := httptest.NewRequest(http.MethodGet, "/users/"+testUserID, nil)
 	routeCtx := chi.NewRouteContext()

@@ -10,11 +10,24 @@ import (
 )
 
 type UserHandler struct {
-	service *user.Service
+	service     *user.Service
+	broadcaster Broadcaster
 }
 
-func NewUserHandler(service *user.Service) *UserHandler {
-	return &UserHandler{service: service}
+type Broadcaster interface {
+	Broadcast(message []byte)
+}
+
+type WSUserEvent struct {
+	Type string `json:"type"`
+	Data any    `json:"data"`
+}
+
+func NewUserHandler(service *user.Service, broadcaster Broadcaster) *UserHandler {
+	return &UserHandler{
+		service:     service,
+		broadcaster: broadcaster,
+	}
 }
 
 func (h *UserHandler) CreateUser(w http.ResponseWriter, r *http.Request) {
@@ -40,6 +53,7 @@ func (h *UserHandler) CreateUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	h.broadcast("user.created", createdUser)
 	writeJSON(w, http.StatusCreated, createdUser)
 }
 
@@ -103,6 +117,7 @@ func (h *UserHandler) UpdateUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	h.broadcast("user.updated", updatedUser)
 	writeJSON(w, http.StatusOK, updatedUser)
 }
 
@@ -124,5 +139,22 @@ func (h *UserHandler) DeleteUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	h.broadcast("user.deleted", map[string]string{"id": userID})
 	writeJSON(w, http.StatusOK, map[string]string{"message": "user deleted"})
+}
+
+func (h *UserHandler) broadcast(eventType string, data any) {
+	if h.broadcaster == nil {
+		return
+	}
+
+	payload, err := json.Marshal(WSUserEvent{
+		Type: eventType,
+		Data: data,
+	})
+	if err != nil {
+		return
+	}
+
+	h.broadcaster.Broadcast(payload)
 }
