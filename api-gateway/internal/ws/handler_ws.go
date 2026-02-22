@@ -179,6 +179,10 @@ func (h *Handler) broadcastAction(action string, resp ResponseMessage, sender *c
 	switch action {
 	case "user.create":
 		eventType = "user.created"
+	case "user.list":
+		eventType = "user.listed"
+	case "user.get":
+		eventType = "user.got"
 	case "user.update":
 		eventType = "user.updated"
 	case "user.delete":

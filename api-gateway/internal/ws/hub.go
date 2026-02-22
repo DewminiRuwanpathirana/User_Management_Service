@@ -48,9 +48,7 @@ func (h *Hub) register(conn *websocket.Conn) *clientConn {
 
 func (h *Hub) unregister(client *clientConn) {
 	h.mu.Lock()
-	if _, exists := h.clients[client]; exists {
-		delete(h.clients, client)
-	}
+	delete(h.clients, client)
 	h.mu.Unlock()
 
 	_ = client.conn.Close()

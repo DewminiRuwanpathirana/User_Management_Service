@@ -49,8 +49,7 @@ func (r *SQLCRepository) Create(ctx context.Context, input CreateUserInput) (*Us
 		return nil, err
 	}
 
-	result := mapDBUser(created)
-	return &result, nil
+	return mapDBUserPtr(created), nil
 }
 
 func (r *SQLCRepository) List(ctx context.Context) ([]User, error) {
@@ -82,8 +81,7 @@ func (r *SQLCRepository) GetByID(ctx context.Context, userID string) (*User, err
 		return nil, err
 	}
 
-	result := mapDBUser(found)
-	return &result, nil
+	return mapDBUserPtr(found), nil
 }
 
 func (r *SQLCRepository) Update(ctx context.Context, userID string, input UpdateUserInput) (*User, error) {
@@ -129,8 +127,7 @@ func (r *SQLCRepository) Update(ctx context.Context, userID string, input Update
 		return nil, err
 	}
 
-	result := mapDBUser(updated)
-	return &result, nil
+	return mapDBUserPtr(updated), nil
 }
 
 func (r *SQLCRepository) Delete(ctx context.Context, userID string) error {
@@ -181,4 +178,9 @@ func mapDBUser(dbUser db.User) User {
 	}
 
 	return result
+}
+
+func mapDBUserPtr(dbUser db.User) *User {
+	result := mapDBUser(dbUser)
+	return &result
 }
