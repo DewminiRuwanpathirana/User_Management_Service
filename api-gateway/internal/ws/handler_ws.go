@@ -41,11 +41,11 @@ func (h *Handler) Handle(w http.ResponseWriter, r *http.Request) {
 		}
 
 		resp := h.process(r.Context(), req)
-		if err := client.writeJSON(resp); err != nil {
-			break
+		if shouldWriteDirectResponse(req.Action, resp) {
+			if err := client.writeJSON(resp); err != nil {
+				break
+			}
 		}
-
-		h.broadcastAction(req.Action, resp, client)
 	}
 }
 
@@ -170,34 +170,15 @@ func failFromError(requestID string, err error) ResponseMessage {
 	}
 }
 
-func (h *Handler) broadcastAction(action string, resp ResponseMessage, sender *clientConn) {
+func shouldWriteDirectResponse(action string, resp ResponseMessage) bool {
 	if !resp.OK {
-		return
+		return true
 	}
 
-	eventType := ""
 	switch action {
-	case "user.create":
-		eventType = "user.created"
-	case "user.list":
-		eventType = "user.listed"
-	case "user.get":
-		eventType = "user.got"
-	case "user.update":
-		eventType = "user.updated"
-	case "user.delete":
-		eventType = "user.deleted"
+	case "user.create", "user.update", "user.delete":
+		return false
 	default:
-		return
+		return true
 	}
-
-	payload, err := json.Marshal(map[string]any{
-		"type": eventType,
-		"data": resp.Data,
-	})
-	if err != nil {
-		return
-	}
-
-	h.hub.BroadcastExcept(payload, sender)
 }

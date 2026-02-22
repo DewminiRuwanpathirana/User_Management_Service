@@ -11,6 +11,8 @@ import (
 )
 
 var ErrInvalidInput = errors.New("invalid input")
+var ErrEmailAlreadyExists = errors.New("email already exists")
+var ErrUserNotFound = errors.New("user not found")
 
 type Repository interface {
 	Create(ctx context.Context, input CreateUserInput) (*User, error)
@@ -34,7 +36,7 @@ func NewService(repo Repository) *Service {
 
 func (s *Service) CreateUser(ctx context.Context, input CreateUserInput) (*User, error) {
 	if err := s.validate.Struct(input); err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrInvalidInput, err)
+		return nil, fmt.Errorf("%w: %s", ErrInvalidInput, formatValidationError(err))
 	}
 
 	if input.Status == "" {
@@ -92,4 +94,20 @@ func (s *Service) UpdateUser(ctx context.Context, userID string, input UpdateUse
 
 func (s *Service) DeleteUser(ctx context.Context, userID string) error {
 	return s.repo.Delete(ctx, userID)
+}
+
+func formatValidationError(err error) string {
+	validationErrors, ok := err.(validator.ValidationErrors)
+	if !ok || len(validationErrors) == 0 {
+		return "invalid input"
+	}
+
+	fe := validationErrors[0]
+	field := fe.Field()
+
+	if fe.Tag() == "required" {
+		return field + " is required"
+	}
+
+	return field + " is invalid"
 }

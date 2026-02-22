@@ -1,45 +1,59 @@
 package main
 
 import (
-	"context"
 	"log"
 	"net/http"
 	"os"
 
-	db "gotrainingproject/internal/db/sqlc"
 	"gotrainingproject/internal/httpapi"
 	"gotrainingproject/internal/user"
 	"gotrainingproject/internal/ws"
+	"gotrainingproject/pkg/usersclient"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/nats-io/nats.go"
 	httpSwagger "github.com/swaggo/http-swagger"
 )
 
 const (
-	defaultDatabaseURL = "postgres://app_user:app_password@localhost:5434/user_management?sslmode=disable"
+	defaultNATSURL     = "nats://localhost:4222"
 	addr               = ":8080"
 )
 
 func main() {
-	dbURL := os.Getenv("DATABASE_URL")
-	if dbURL == "" {
-		dbURL = defaultDatabaseURL
+	natsURL := os.Getenv("NATS_URL")
+	if natsURL == "" {
+		natsURL = defaultNATSURL
 	}
 
-	dbPool, err := pgxpool.New(context.Background(), dbURL)
+	nc, err := nats.Connect(natsURL)
 	if err != nil {
-		log.Fatalf("failed to connect to database: %v", err)
+		log.Fatalf("failed to connect to nats: %v", err)
 	}
-	defer dbPool.Close()
+	defer nc.Drain()
 
-	// dependency injection
-	queries := db.New(dbPool)
-	userRepo := user.NewSQLCRepository(queries)
+	usersNATSClient := usersclient.New(nc, 0)
+	userRepo := user.NewNATSRepository(usersNATSClient)
 	userService := user.NewService(userRepo)
 	wsHub := ws.NewHub()
 	userHandler := httpapi.NewUserHandler(userService, wsHub)
 	wsHandler := ws.NewHandler(userService, wsHub)
+
+	eventSubjects := []string{
+		"user.event.created",
+		"user.event.updated",
+		"user.event.deleted",
+	}
+	for _, subject := range eventSubjects {
+		currentSubject := subject
+		_, err := nc.Subscribe(currentSubject, func(msg *nats.Msg) {
+			wsHub.Broadcast(msg.Data)
+		})
+		if err != nil {
+			log.Fatalf("failed to subscribe %s: %v", currentSubject, err)
+		}
+		log.Printf("subscribed to %s", currentSubject)
+	}
 
 	router := chi.NewRouter()
 

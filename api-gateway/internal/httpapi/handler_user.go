@@ -53,7 +53,6 @@ func (h *UserHandler) CreateUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.broadcast("user.created", createdUser)
 	writeJSON(w, http.StatusCreated, createdUser)
 }
 
@@ -119,7 +118,6 @@ func (h *UserHandler) UpdateUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.broadcast("user.updated", updatedUser)
 	writeJSON(w, http.StatusOK, updatedUser)
 }
 
@@ -141,7 +139,6 @@ func (h *UserHandler) DeleteUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.broadcast("user.deleted", map[string]string{"id": userID})
 	writeJSON(w, http.StatusOK, map[string]string{"message": "user deleted"})
 }
 
