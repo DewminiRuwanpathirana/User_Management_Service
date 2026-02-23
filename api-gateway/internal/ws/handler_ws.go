@@ -6,8 +6,9 @@ import (
 	"errors"
 	"net/http"
 
-	"github.com/gorilla/websocket"
 	"gotrainingproject/internal/user"
+
+	"github.com/gorilla/websocket"
 )
 
 type Handler struct {
@@ -27,17 +28,25 @@ func NewHandler(service *user.Service, hub *Hub) *Handler {
 }
 
 func (h *Handler) Handle(w http.ResponseWriter, r *http.Request) {
-	conn, err := h.upgrader.Upgrade(w, r, nil)
+	conn, err := h.upgrader.Upgrade(w, r, nil) // upgrade HTTP connection to WebSocket.
 	if err != nil {
 		return
 	}
-	client := h.hub.register(conn)
-	defer h.hub.unregister(client)
+	client := h.hub.register(conn) // register the new client connection in the hub.
+	defer h.hub.unregister(client) // ensure the client is unregistered on disconnect.
 
 	for {
-		var req RequestMessage
-		if err := conn.ReadJSON(&req); err != nil {
+		_, message, err := conn.ReadMessage()
+		if err != nil {
 			break
+		}
+
+		var req RequestMessage
+		if err := json.Unmarshal(message, &req); err != nil {
+			if err := client.writeJSON(fail("", "bad_request", "invalid message")); err != nil {
+				break
+			}
+			continue
 		}
 
 		resp := h.process(r.Context(), req)

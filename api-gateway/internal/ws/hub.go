@@ -36,6 +36,7 @@ func NewHub() *Hub {
 	}
 }
 
+// Adding clients to the hub and removing them when they disconnect.
 func (h *Hub) register(conn *websocket.Conn) *clientConn {
 	client := &clientConn{conn: conn}
 

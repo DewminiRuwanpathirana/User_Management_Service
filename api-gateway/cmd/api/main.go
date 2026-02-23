@@ -4,6 +4,8 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"path/filepath"
+	"runtime"
 
 	"gotrainingproject/internal/httpapi"
 	"gotrainingproject/internal/user"
@@ -16,8 +18,8 @@ import (
 )
 
 const (
-	defaultNATSURL     = "nats://localhost:4222"
-	addr               = ":8080"
+	defaultNATSURL = "nats://localhost:4222"
+	addr           = ":8080"
 )
 
 func main() {
@@ -67,7 +69,13 @@ func main() {
 	})
 	// serve OpenAPI spec and Swagger UI
 	router.Get("/doc/openapi.yaml", func(w http.ResponseWriter, r *http.Request) {
-		http.ServeFile(w, r, "internal/openapi/openapi.yaml")
+		_, currentFile, _, ok := runtime.Caller(0)
+		if !ok {
+			http.NotFound(w, r)
+			return
+		}
+		specPath := filepath.Join(filepath.Dir(currentFile), "..", "..", "internal", "openapi", "openapi.yaml")
+		http.ServeFile(w, r, specPath)
 	})
 	router.Get("/doc", func(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/doc/index.html", http.StatusMovedPermanently)

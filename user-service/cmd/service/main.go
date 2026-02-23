@@ -23,7 +23,7 @@ func main() {
 
 	dbPool, err := pgxpool.New(context.Background(), dbURL)
 	if err != nil {
-		log.Fatalf("failed to connect to database: %v", err)
+		log.Fatalf("failed to connect to database: %v", err) // log the error and terminate the process.
 	}
 	defer dbPool.Close()
 
@@ -37,7 +37,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("failed to connect to nats: %v", err)
 	}
-	defer nc.Drain()
+	defer nc.Drain() // ensure all pending messages are sent before closing the connection.
 	handler := newCommandHandler(queries, nc)
 
 	mustSubscribe(nc, "user.command.list", handler.handleListUsers)
@@ -54,7 +54,7 @@ func main() {
 	log.Printf("subscribed to user.command.update")
 	log.Printf("subscribed to user.command.delete")
 
-	select {}
+	select {} // keep the service running infinitely.
 }
 
 func getEnv(key, fallback string) string {

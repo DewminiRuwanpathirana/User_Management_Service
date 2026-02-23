@@ -2,6 +2,7 @@ package usersclient
 
 import "time"
 
+// these types used for NATS communication between API Gateway and Users Service.
 type CreateUserInput struct {
 	FirstName string `json:"firstName"`
 	LastName  string `json:"lastName"`

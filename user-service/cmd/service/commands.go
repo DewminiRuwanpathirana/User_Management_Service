@@ -8,12 +8,13 @@ import (
 
 	db "user-service/internal/db/sqlc"
 
+	contract "shared/contract"
+
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/nats-io/nats.go"
-	contract "shared/contract"
 )
 
 type userDTO struct {
@@ -64,7 +65,7 @@ func newCommandHandler(queries *db.Queries, nc *nats.Conn) *commandHandler {
 	return &commandHandler{queries: queries, nc: nc}
 }
 
-// mustSubscribe keeps startup flow simple and fails fast if a subject cannot be registered.
+// each handler function processes the incoming NATS message, interacts with the database, and sends a response back to the requester. They also publish events for create, update, and delete operations.
 func mustSubscribe(nc *nats.Conn, subject string, handler func(*nats.Msg)) {
 	_, err := nc.Subscribe(subject, handler)
 	if err != nil {
