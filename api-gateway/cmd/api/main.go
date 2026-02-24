@@ -30,9 +30,9 @@ func main() {
 
 	nc, err := nats.Connect(natsURL)
 	if err != nil {
-		log.Fatalf("failed to connect to nats: %v", err)
+		log.Fatalf("failed to connect to nats: %v", err) // log the error and terminate the process.
 	}
-	defer nc.Drain()
+	defer nc.Drain() // ensure all pending messages are sent before closing the connection.
 
 	usersNATSClient := usersclient.New(nc, 0)
 	userRepo := user.NewNATSRepository(usersNATSClient)

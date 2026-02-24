@@ -11,6 +11,7 @@ type clientConn struct {
 	mu   sync.Mutex
 }
 
+// helper method to send JSON and Text messages to the client connection in a thread-safe manner.
 func (c *clientConn) writeJSON(value any) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()

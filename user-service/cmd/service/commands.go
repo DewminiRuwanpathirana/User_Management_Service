@@ -65,7 +65,7 @@ func newCommandHandler(queries *db.Queries, nc *nats.Conn) *commandHandler {
 	return &commandHandler{queries: queries, nc: nc}
 }
 
-// each handler function processes the incoming NATS message, interacts with the database, and sends a response back to the requester. They also publish events for create, update, and delete operations.
+// each handler function processes the incoming NATS message, and sends a response back to the requester.
 func mustSubscribe(nc *nats.Conn, subject string, handler func(*nats.Msg)) {
 	_, err := nc.Subscribe(subject, handler)
 	if err != nil {

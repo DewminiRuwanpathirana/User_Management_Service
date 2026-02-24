@@ -5,8 +5,9 @@ import (
 	"errors"
 	"net/http"
 
-	"github.com/go-chi/chi/v5"
 	"gotrainingproject/internal/user"
+
+	"github.com/go-chi/chi/v5"
 )
 
 type UserHandler struct {
@@ -140,6 +141,7 @@ func (h *UserHandler) DeleteUser(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"message": "user deleted"})
 }
 
+// send real-time updates to connected WebSocket clients.
 func (h *UserHandler) broadcast(eventType string, data any) {
 	if h.broadcaster == nil {
 		return
@@ -155,4 +157,3 @@ func (h *UserHandler) broadcast(eventType string, data any) {
 
 	h.broadcaster.Broadcast(payload)
 }
-

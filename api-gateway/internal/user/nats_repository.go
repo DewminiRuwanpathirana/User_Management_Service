@@ -81,6 +81,7 @@ func (r *NATSRepository) Delete(ctx context.Context, userID string) error {
 	return nil
 }
 
+// convert between the client-side User struct and the internal User struct used by the service.
 func mapClientUser(in *usersclient.User) *User {
 	if in == nil {
 		return nil

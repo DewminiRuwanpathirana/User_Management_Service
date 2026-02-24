@@ -27,6 +27,7 @@ func main() {
 	}
 	defer dbPool.Close()
 
+	// run database migrations
 	if err := runMigrations(context.Background(), dbPool); err != nil {
 		log.Fatalf("failed to run migrations: %v", err)
 	}

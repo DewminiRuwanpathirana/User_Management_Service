@@ -22,7 +22,7 @@ func NewHandler(service *user.Service, hub *Hub) *Handler {
 		service: service,
 		hub:     hub,
 		upgrader: websocket.Upgrader{
-			CheckOrigin: func(_ *http.Request) bool { return true },
+			CheckOrigin: func(_ *http.Request) bool { return true }, // converts HTTP request to WebSocket connection.
 		},
 	}
 }

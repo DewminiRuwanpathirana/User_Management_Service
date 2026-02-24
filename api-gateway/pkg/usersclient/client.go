@@ -6,10 +6,12 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/nats-io/nats.go"
 	contract "shared/contract"
+
+	"github.com/nats-io/nats.go"
 )
 
+// API-Gateway publishes these commands to NATS subjects.
 const (
 	SubjectCreate = "user.command.create"
 	SubjectList   = "user.command.list"
@@ -25,8 +27,6 @@ var ErrNotFound = errors.New("users client not found")
 var ErrService = errors.New("users client service error")
 
 type Client interface {
-	// Validation should stay in api-gateway before calling this client.
-	// This client only sends commands to user-service over NATS.
 	Create(ctx context.Context, input CreateUserInput) (*User, error)
 	List(ctx context.Context) ([]User, error)
 	Get(ctx context.Context, userID string) (*User, error)
@@ -131,7 +131,6 @@ func (c *NATSClient) Delete(ctx context.Context, userID string) error {
 	return err
 }
 
-// request-reply pattern:
 // gateway sends a request to one subject and waits for one response message.
 func request[T any, R any](ctx context.Context, c *NATSClient, subject string, req contract.CommandRequest[R]) (*contract.CommandResponse[T], error) {
 	data, err := contract.ToJSON(req)
