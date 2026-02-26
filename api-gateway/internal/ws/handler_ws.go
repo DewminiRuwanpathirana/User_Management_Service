@@ -6,37 +6,42 @@ import (
 	"errors"
 	"net/http"
 
-	"gotrainingproject/internal/user"
+	"user-service/pkg/usersclient"
+	"user-service/pkg/validation"
 
+	"github.com/go-playground/validator/v10"
 	"github.com/gorilla/websocket"
 )
 
 type Handler struct {
-	service  *user.Service
+	client   usersclient.Client
 	hub      *Hub
 	upgrader websocket.Upgrader
+	validate *validator.Validate
 }
 
-func NewHandler(service *user.Service, hub *Hub) *Handler {
+func NewHandler(client usersclient.Client, hub *Hub) *Handler {
+	v := validator.New()
+	_ = validation.RegisterPhone(v)
+
 	return &Handler{
-		service: service,
-		hub:     hub,
-		upgrader: websocket.Upgrader{
-			CheckOrigin: func(_ *http.Request) bool { return true }, // converts HTTP request to WebSocket connection.
-		},
+		client:   client,
+		hub:      hub,
+		upgrader: websocket.Upgrader{},
+		validate: v,
 	}
 }
 
 func (h *Handler) Handle(w http.ResponseWriter, r *http.Request) {
-	conn, err := h.upgrader.Upgrade(w, r, nil) // upgrade HTTP connection to WebSocket.
+	conn, err := h.upgrader.Upgrade(w, r, nil)
 	if err != nil {
 		return
 	}
-	client := h.hub.register(conn) // register the new client connection in the hub.
-	defer h.hub.unregister(client) // ensure the client is unregistered on disconnect.
+	client := h.hub.register(conn)
+	defer h.hub.unregister(client)
 
 	for {
-		_, message, err := conn.ReadMessage()
+		_, message, err := conn.ReadMessage() // read a message from the WebSocket connection
 		if err != nil {
 			break
 		}
@@ -76,20 +81,29 @@ func (h *Handler) process(ctx context.Context, req RequestMessage) ResponseMessa
 }
 
 func (h *Handler) create(ctx context.Context, req RequestMessage) ResponseMessage {
-	var input user.CreateUserInput
+	var input usersclient.CreateUserInput // empty struct defines the expected fields for creating a user.
 	if err := json.Unmarshal(req.Payload, &input); err != nil {
 		return fail(req.RequestID, "bad_request", "invalid payload")
 	}
+	if err := h.validate.Struct(input); err != nil { // It checks input struct fields against validate tags in model
+		return fail(req.RequestID, "bad_request", "invalid payload")
+	}
 
-	return h.run(req.RequestID, func() (any, error) {
-		return h.service.CreateUser(ctx, input)
-	})
+	data, err := h.client.Create(ctx, input)
+	if err != nil {
+		return failFromError(req.RequestID, err)
+	}
+
+	return ok(req.RequestID, data)
 }
 
 func (h *Handler) list(ctx context.Context, req RequestMessage) ResponseMessage {
-	return h.run(req.RequestID, func() (any, error) {
-		return h.service.ListUsers(ctx)
-	})
+	data, err := h.client.List(ctx)
+	if err != nil {
+		return failFromError(req.RequestID, err)
+	}
+
+	return ok(req.RequestID, data)
 }
 
 func (h *Handler) get(ctx context.Context, req RequestMessage) ResponseMessage {
@@ -97,10 +111,16 @@ func (h *Handler) get(ctx context.Context, req RequestMessage) ResponseMessage {
 	if err := json.Unmarshal(req.Payload, &payload); err != nil {
 		return fail(req.RequestID, "bad_request", "invalid payload")
 	}
+	if err := h.validate.Struct(usersclient.IDRequest{ID: payload.ID}); err != nil {
+		return fail(req.RequestID, "bad_request", "id must be valid uuid")
+	}
 
-	return h.run(req.RequestID, func() (any, error) {
-		return h.service.GetUserByID(ctx, payload.ID)
-	})
+	data, err := h.client.Get(ctx, payload.ID)
+	if err != nil {
+		return failFromError(req.RequestID, err)
+	}
+
+	return ok(req.RequestID, data)
 }
 
 func (h *Handler) update(ctx context.Context, req RequestMessage) ResponseMessage {
@@ -109,7 +129,7 @@ func (h *Handler) update(ctx context.Context, req RequestMessage) ResponseMessag
 		return fail(req.RequestID, "bad_request", "invalid payload")
 	}
 
-	input := user.UpdateUserInput{
+	input := usersclient.UpdateUserInput{
 		FirstName: payload.FirstName,
 		LastName:  payload.LastName,
 		Email:     payload.Email,
@@ -117,10 +137,23 @@ func (h *Handler) update(ctx context.Context, req RequestMessage) ResponseMessag
 		Age:       payload.Age,
 		Status:    payload.Status,
 	}
+	if input.FirstName == nil && input.LastName == nil && input.Email == nil &&
+		input.Phone == nil && input.Age == nil && input.Status == nil {
+		return fail(req.RequestID, "bad_request", "at least one field is required")
+	}
+	if err := h.validate.Struct(input); err != nil {
+		return fail(req.RequestID, "bad_request", "invalid payload")
+	}
+	if err := h.validate.Struct(usersclient.IDRequest{ID: payload.ID}); err != nil {
+		return fail(req.RequestID, "bad_request", "id must be valid uuid")
+	}
 
-	return h.run(req.RequestID, func() (any, error) {
-		return h.service.UpdateUser(ctx, payload.ID, input)
-	})
+	data, err := h.client.Update(ctx, payload.ID, input)
+	if err != nil {
+		return failFromError(req.RequestID, err)
+	}
+
+	return ok(req.RequestID, data)
 }
 
 func (h *Handler) delete(ctx context.Context, req RequestMessage) ResponseMessage {
@@ -128,52 +161,32 @@ func (h *Handler) delete(ctx context.Context, req RequestMessage) ResponseMessag
 	if err := json.Unmarshal(req.Payload, &payload); err != nil {
 		return fail(req.RequestID, "bad_request", "invalid payload")
 	}
-
-	return h.run(req.RequestID, func() (any, error) {
-		if err := h.service.DeleteUser(ctx, payload.ID); err != nil {
-			return nil, err
-		}
-
-		return map[string]string{"message": "user deleted"}, nil
-	})
-}
-
-func (h *Handler) run(requestID string, fn func() (any, error)) ResponseMessage {
-	data, err := fn()
-	if err != nil {
-		return failFromError(requestID, err)
+	if err := h.validate.Struct(usersclient.IDRequest{ID: payload.ID}); err != nil {
+		return fail(req.RequestID, "bad_request", "id must be valid uuid")
 	}
 
-	return ok(requestID, data)
+	err := h.client.Delete(ctx, payload.ID)
+	if err != nil {
+		return failFromError(req.RequestID, err)
+	}
+
+	return ok(req.RequestID, map[string]string{"message": "user deleted"})
 }
 
 func ok(requestID string, data any) ResponseMessage {
-	return ResponseMessage{
-		RequestID: requestID,
-		OK:        true,
-		Data:      data,
-	}
+	return ResponseMessage{RequestID: requestID, OK: true, Data: data}
 }
 
 func fail(requestID, code, message string) ResponseMessage {
-	return ResponseMessage{
-		RequestID: requestID,
-		OK:        false,
-		Error: &ErrorMessage{
-			Code:    code,
-			Message: message,
-		},
-	}
+	return ResponseMessage{RequestID: requestID, OK: false, Error: &ErrorMessage{Code: code, Message: message}}
 }
 
 func failFromError(requestID string, err error) ResponseMessage {
 	switch {
-	case errors.Is(err, user.ErrInvalidInput):
+	case errors.Is(err, usersclient.ErrBadRequest):
 		return fail(requestID, "bad_request", err.Error())
-	case errors.Is(err, user.ErrUserNotFound):
+	case errors.Is(err, usersclient.ErrNotFound):
 		return fail(requestID, "not_found", err.Error())
-	case errors.Is(err, user.ErrEmailAlreadyExists):
-		return fail(requestID, "bad_request", err.Error())
 	default:
 		return fail(requestID, "internal_error", "internal server error")
 	}

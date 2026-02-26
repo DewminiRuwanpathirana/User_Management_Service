@@ -6,6 +6,8 @@ import (
 	"os"
 
 	db "user-service/internal/db/sqlc"
+	usersvc "user-service/internal/user"
+	"user-service/pkg/contract"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/nats-io/nats.go"
@@ -14,7 +16,6 @@ import (
 const (
 	defaultDatabaseURL = "postgres://app_user:app_password@localhost:5434/user_management?sslmode=disable"
 	defaultNATSURL     = "nats://localhost:4222"
-	defaultStatus      = "Active"
 )
 
 func main() {
@@ -33,29 +34,26 @@ func main() {
 	}
 
 	queries := db.New(dbPool)
+	repo := usersvc.NewPostgresRepository(queries)
+	userService := usersvc.NewService(repo)
 
 	nc, err := nats.Connect(natsURL)
 	if err != nil {
 		log.Fatalf("failed to connect to nats: %v", err)
 	}
 	defer nc.Drain() // ensure all pending messages are sent before closing the connection.
-	handler := newCommandHandler(queries, nc)
+	handler := newCommandHandler(userService, nc)
 
-	mustSubscribe(nc, "user.command.list", handler.handleListUsers)
-	mustSubscribe(nc, "user.command.create", handler.handleCreateUser)
-	mustSubscribe(nc, "user.command.get", handler.handleGetUser)
-	mustSubscribe(nc, "user.command.update", handler.handleUpdateUser)
-	mustSubscribe(nc, "user.command.delete", handler.handleDeleteUser)
+	handleSubscribe(nc, contract.SubjectUserCommandList, handler.handleListUsers)
+	handleSubscribe(nc, contract.SubjectUserCommandCreate, handler.handleCreateUser)
+	handleSubscribe(nc, contract.SubjectUserCommandGet, handler.handleGetUser)
+	handleSubscribe(nc, contract.SubjectUserCommandUpdate, handler.handleUpdateUser)
+	handleSubscribe(nc, contract.SubjectUserCommandDelete, handler.handleDeleteUser)
 
 	log.Printf("user-service connected to postgres")
 	log.Printf("user-service connected to nats")
-	log.Printf("subscribed to user.command.list")
-	log.Printf("subscribed to user.command.create")
-	log.Printf("subscribed to user.command.get")
-	log.Printf("subscribed to user.command.update")
-	log.Printf("subscribed to user.command.delete")
 
-	select {} // keep the service running infinitely.
+	select {} // keep the service running infinitely to listen for incoming NATS messages and process them.
 }
 
 func getEnv(key, fallback string) string {

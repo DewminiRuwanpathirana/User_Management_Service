@@ -8,7 +8,7 @@ require (
 	github.com/gorilla/websocket v1.5.3
 	github.com/nats-io/nats.go v1.48.0
 	github.com/swaggo/http-swagger v1.3.4
-	shared/contract v0.0.0
+	user-service v0.0.0
 )
 
 require (
@@ -40,4 +40,4 @@ require (
 	gopkg.in/yaml.v2 v2.4.0 // indirect
 )
 
-replace shared/contract => ../shared/contract
+replace user-service => ../user-service

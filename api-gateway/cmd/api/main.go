@@ -8,9 +8,9 @@ import (
 	"runtime"
 
 	"gotrainingproject/internal/httpapi"
-	"gotrainingproject/internal/user"
 	"gotrainingproject/internal/ws"
-	"gotrainingproject/pkg/usersclient"
+	"user-service/pkg/contract"
+	"user-service/pkg/usersclient"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/nats-io/nats.go"
@@ -35,16 +35,14 @@ func main() {
 	defer nc.Drain() // ensure all pending messages are sent before closing the connection.
 
 	usersNATSClient := usersclient.New(nc, 0)
-	userRepo := user.NewNATSRepository(usersNATSClient)
-	userService := user.NewService(userRepo)
 	wsHub := ws.NewHub()
-	userHandler := httpapi.NewUserHandler(userService, wsHub)
-	wsHandler := ws.NewHandler(userService, wsHub)
+	userHandler := httpapi.NewUserHandler(usersNATSClient)
+	wsHandler := ws.NewHandler(usersNATSClient, wsHub)
 
 	eventSubjects := []string{
-		"user.event.created",
-		"user.event.updated",
-		"user.event.deleted",
+		contract.SubjectUserEventCreated,
+		contract.SubjectUserEventUpdated,
+		contract.SubjectUserEventDeleted,
 	}
 	for _, subject := range eventSubjects {
 		currentSubject := subject

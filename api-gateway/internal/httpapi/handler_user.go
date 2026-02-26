@@ -5,52 +5,47 @@ import (
 	"errors"
 	"net/http"
 
-	"gotrainingproject/internal/user"
+	"user-service/pkg/usersclient"
+	"user-service/pkg/validation"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/go-playground/validator/v10"
 )
 
 type UserHandler struct {
-	service     *user.Service
-	broadcaster Broadcaster
+	client   usersclient.Client  // interface that defines the methods for interacting with the user service.
+	validate *validator.Validate // validator instance for validating request payloads.
 }
 
-type Broadcaster interface {
-	Broadcast(message []byte)
-}
+func NewUserHandler(client usersclient.Client) *UserHandler {
+	v := validator.New()
+	_ = validation.RegisterPhone(v)
 
-type WSUserEvent struct {
-	Type string `json:"type"`
-	Data any    `json:"data"`
-}
-
-func NewUserHandler(service *user.Service, broadcaster Broadcaster) *UserHandler {
 	return &UserHandler{
-		service:     service,
-		broadcaster: broadcaster,
+		client:   client,
+		validate: v,
 	}
 }
 
 func (h *UserHandler) CreateUser(w http.ResponseWriter, r *http.Request) {
-	var input user.CreateUserInput
+	var input usersclient.CreateUserInput // empty struct defines the expected fields for creating a user.
 	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
+	if err := h.validate.Struct(input); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
 
-	createdUser, err := h.service.CreateUser(r.Context(), input)
+	createdUser, err := h.client.Create(r.Context(), input)
 	if err != nil {
-		if errors.Is(err, user.ErrInvalidInput) {
+		switch {
+		case errors.Is(err, usersclient.ErrBadRequest):
 			writeError(w, http.StatusBadRequest, err.Error())
-			return
+		default:
+			writeError(w, http.StatusInternalServerError, "internal server error")
 		}
-
-		if errors.Is(err, user.ErrEmailAlreadyExists) {
-			writeError(w, http.StatusBadRequest, err.Error())
-			return
-		}
-
-		writeError(w, http.StatusInternalServerError, "internal server error")
 		return
 	}
 
@@ -58,7 +53,7 @@ func (h *UserHandler) CreateUser(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *UserHandler) ListUsers(w http.ResponseWriter, r *http.Request) {
-	users, err := h.service.ListUsers(r.Context())
+	users, err := h.client.List(r.Context())
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "internal server error")
 		return
@@ -68,21 +63,22 @@ func (h *UserHandler) ListUsers(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *UserHandler) GetUserByID(w http.ResponseWriter, r *http.Request) {
-	userID := chi.URLParam(r, "id")
+	userID := chi.URLParam(r, "id") // extract the user ID from the URL path parameter.
+	if err := h.validate.Struct(usersclient.IDRequest{ID: userID}); err != nil {
+		writeError(w, http.StatusBadRequest, "id must be valid uuid")
+		return
+	}
 
-	foundUser, err := h.service.GetUserByID(r.Context(), userID)
+	foundUser, err := h.client.Get(r.Context(), userID)
 	if err != nil {
-		if errors.Is(err, user.ErrUserNotFound) {
+		switch {
+		case errors.Is(err, usersclient.ErrNotFound):
 			writeError(w, http.StatusNotFound, err.Error())
-			return
-		}
-
-		if errors.Is(err, user.ErrInvalidInput) {
+		case errors.Is(err, usersclient.ErrBadRequest):
 			writeError(w, http.StatusBadRequest, err.Error())
-			return
+		default:
+			writeError(w, http.StatusInternalServerError, "internal server error")
 		}
-
-		writeError(w, http.StatusInternalServerError, "internal server error")
 		return
 	}
 
@@ -90,30 +86,37 @@ func (h *UserHandler) GetUserByID(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *UserHandler) UpdateUser(w http.ResponseWriter, r *http.Request) {
-	userID := chi.URLParam(r, "id")
+	userID := chi.URLParam(r, "id") // extract the user ID from the URL path parameter.
 
-	var input user.UpdateUserInput
+	var input usersclient.UpdateUserInput
 	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
+	if input.FirstName == nil && input.LastName == nil && input.Email == nil &&
+		input.Phone == nil && input.Age == nil && input.Status == nil {
+		writeError(w, http.StatusBadRequest, "at least one field is required")
+		return
+	}
+	if err := h.validate.Struct(input); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if err := h.validate.Struct(usersclient.IDRequest{ID: userID}); err != nil {
+		writeError(w, http.StatusBadRequest, "id must be valid uuid")
+		return
+	}
 
-	updatedUser, err := h.service.UpdateUser(r.Context(), userID, input)
+	updatedUser, err := h.client.Update(r.Context(), userID, input)
 	if err != nil {
-		if errors.Is(err, user.ErrInvalidInput) {
+		switch {
+		case errors.Is(err, usersclient.ErrBadRequest):
 			writeError(w, http.StatusBadRequest, err.Error())
-			return
-		}
-		if errors.Is(err, user.ErrUserNotFound) {
+		case errors.Is(err, usersclient.ErrNotFound):
 			writeError(w, http.StatusNotFound, err.Error())
-			return
+		default:
+			writeError(w, http.StatusInternalServerError, "internal server error")
 		}
-		if errors.Is(err, user.ErrEmailAlreadyExists) {
-			writeError(w, http.StatusBadRequest, err.Error())
-			return
-		}
-
-		writeError(w, http.StatusInternalServerError, "internal server error")
 		return
 	}
 
@@ -121,39 +124,24 @@ func (h *UserHandler) UpdateUser(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *UserHandler) DeleteUser(w http.ResponseWriter, r *http.Request) {
-	userID := chi.URLParam(r, "id")
+	userID := chi.URLParam(r, "id") // extract the user ID from the URL path parameter.
+	if err := h.validate.Struct(usersclient.IDRequest{ID: userID}); err != nil {
+		writeError(w, http.StatusBadRequest, "id must be valid uuid")
+		return
+	}
 
-	err := h.service.DeleteUser(r.Context(), userID)
+	err := h.client.Delete(r.Context(), userID)
 	if err != nil {
-		if errors.Is(err, user.ErrUserNotFound) {
+		switch {
+		case errors.Is(err, usersclient.ErrNotFound):
 			writeError(w, http.StatusNotFound, err.Error())
-			return
-		}
-		if errors.Is(err, user.ErrInvalidInput) {
+		case errors.Is(err, usersclient.ErrBadRequest):
 			writeError(w, http.StatusBadRequest, err.Error())
-			return
+		default:
+			writeError(w, http.StatusInternalServerError, "internal server error")
 		}
-
-		writeError(w, http.StatusInternalServerError, "internal server error")
 		return
 	}
 
 	writeJSON(w, http.StatusOK, map[string]string{"message": "user deleted"})
-}
-
-// send real-time updates to connected WebSocket clients.
-func (h *UserHandler) broadcast(eventType string, data any) {
-	if h.broadcaster == nil {
-		return
-	}
-
-	payload, err := json.Marshal(WSUserEvent{
-		Type: eventType,
-		Data: data,
-	})
-	if err != nil {
-		return
-	}
-
-	h.broadcaster.Broadcast(payload)
 }
