@@ -41,7 +41,11 @@ func main() {
 	if err != nil {
 		log.Fatalf("failed to connect to nats: %v", err)
 	}
-	defer nc.Drain() // ensure all pending messages are sent before closing the connection.
+	defer func() {
+		if err := nc.Drain(); err != nil {
+			log.Printf("failed to drain nats connection: %v", err)
+		}
+	}() // ensure all pending messages are sent before closing the connection.
 	handler := newCommandHandler(userService, nc)
 
 	handleSubscribe(nc, contract.SubjectUserCommandList, handler.handleListUsers)

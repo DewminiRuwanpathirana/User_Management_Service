@@ -37,10 +37,12 @@ type Event[T any] struct { // T is a generic type parameter that allows Event to
 	Data       T      `json:"data"`
 }
 
+// marshal JSON payloads for NATS messages
 func ToJSON(value any) ([]byte, error) {
 	return json.Marshal(value)
 }
 
+// unmarshal JSON payload into a struct of type T
 func FromJSON[T any](payload []byte) (T, error) {
 	var result T
 	err := json.Unmarshal(payload, &result)

@@ -11,6 +11,8 @@ type clientConn struct {
 	mu   sync.Mutex
 }
 
+// send a JSON message to the client connection in a thread-safe manner
+// multiple goroutines may try writing to the same websocket connection at the same time
 func (c *clientConn) writeJSON(value any) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -18,6 +20,7 @@ func (c *clientConn) writeJSON(value any) error {
 	return c.conn.WriteJSON(value)
 }
 
+// send a text message to the client connection in a thread-safe manner.
 func (c *clientConn) writeText(message []byte) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -66,10 +69,10 @@ func (h *Hub) run() {
 	}
 }
 
-// register a new client connection to the hub and return the clientConn instance.
+// register a new client connection to the hub and return the clientConn instance
 func (h *Hub) register(conn *websocket.Conn) *clientConn {
 	client := &clientConn{conn: conn}
-	h.registerCh <- client // send the clientConn instance to the register channel to be added to the clients map.
+	h.registerCh <- client // send the clientConn instance to the register channel to be added to the clients map
 	return client
 }
 

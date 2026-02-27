@@ -32,7 +32,11 @@ func main() {
 	if err != nil {
 		log.Fatalf("failed to connect to nats: %v", err) // log the error and terminate the process.
 	}
-	defer nc.Drain() // ensure all pending messages are sent before closing the connection.
+	defer func() {
+		if err := nc.Drain(); err != nil {
+			log.Printf("failed to drain nats connection: %v", err)
+		}
+	}() // ensure all pending messages are sent before closing the connection.
 
 	usersNATSClient := usersclient.New(nc, 0)
 	wsHub := ws.NewHub()
@@ -47,7 +51,7 @@ func main() {
 	for _, subject := range eventSubjects {
 		currentSubject := subject
 		_, err := nc.Subscribe(currentSubject, func(msg *nats.Msg) {
-			wsHub.Broadcast(msg.Data)
+			wsHub.Broadcast(msg.Data) // broadcast the received NATS message data to all connected WebSocket clients through the hub
 		})
 		if err != nil {
 			log.Fatalf("failed to subscribe %s: %v", currentSubject, err)
@@ -67,7 +71,7 @@ func main() {
 	})
 	// serve OpenAPI spec and Swagger UI
 	router.Get("/doc/openapi.yaml", func(w http.ResponseWriter, r *http.Request) {
-		_, currentFile, _, ok := runtime.Caller(0)
+		_, currentFile, _, ok := runtime.Caller(0) // get the file path of the current source code file
 		if !ok {
 			http.NotFound(w, r)
 			return

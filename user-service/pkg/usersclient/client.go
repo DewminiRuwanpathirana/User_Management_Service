@@ -17,6 +17,7 @@ var ErrBadRequest = errors.New("users client bad request")
 var ErrNotFound = errors.New("users client not found")
 var ErrService = errors.New("users client service error")
 
+// Client defines the interface for interacting with the user service.
 type Client interface {
 	Create(ctx context.Context, input CreateUserInput) (*User, error)
 	List(ctx context.Context) ([]User, error)
@@ -122,7 +123,7 @@ func (c *NATSClient) Delete(ctx context.Context, userID string) error {
 	return err
 }
 
-// helper function to send a request and receive a response from the user service via NATS
+// send a request and receive a response from the user service via NATS
 func request[T any, R any](ctx context.Context, c *NATSClient, subject string, req contract.CommandRequest[R]) (*contract.CommandResponse[T], error) {
 	data, err := contract.ToJSON(req)
 	if err != nil {
@@ -130,7 +131,7 @@ func request[T any, R any](ctx context.Context, c *NATSClient, subject string, r
 	}
 
 	timeoutCtx, cancel := context.WithTimeout(ctx, c.timeout)
-	defer cancel()
+	defer cancel() // cancel the context to release resources if the request completes before the timeout
 
 	// send the request and wait for a response from the user service via NATS
 	msg, err := c.nc.RequestWithContext(timeoutCtx, subject, data)

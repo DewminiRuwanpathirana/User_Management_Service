@@ -33,7 +33,7 @@ func (h *UserHandler) CreateUser(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
-	if err := h.validate.Struct(input); err != nil {
+	if err := h.validate.Struct(input); err != nil { // validate the input struct fields based on the validation tags defined in the struct
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
