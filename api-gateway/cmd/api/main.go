@@ -9,7 +9,6 @@ import (
 
 	"gotrainingproject/internal/httpapi"
 	"gotrainingproject/internal/ws"
-	"user-service/pkg/contract"
 	"user-service/pkg/usersclient"
 
 	"github.com/go-chi/chi/v5"
@@ -43,20 +42,9 @@ func main() {
 	userHandler := httpapi.NewUserHandler(usersNATSClient)
 	wsHandler := ws.NewHandler(usersNATSClient, wsHub)
 
-	eventSubjects := []string{
-		contract.SubjectUserEventCreated,
-		contract.SubjectUserEventUpdated,
-		contract.SubjectUserEventDeleted,
-	}
-	for _, subject := range eventSubjects {
-		currentSubject := subject
-		_, err := nc.Subscribe(currentSubject, func(msg *nats.Msg) {
-			wsHub.Broadcast(msg.Data) // broadcast the received NATS message data to all connected WebSocket clients through the hub
-		})
-		if err != nil {
-			log.Fatalf("failed to subscribe %s: %v", currentSubject, err)
-		}
-		log.Printf("subscribed to %s", currentSubject)
+	// subscribe to user events and broadcast them to connected WebSocket clients.
+	if err := ws.SubscribeUserEvents(nc, wsHub); err != nil {
+		log.Fatalf("failed to subscribe user events: %v", err)
 	}
 
 	router := chi.NewRouter()
