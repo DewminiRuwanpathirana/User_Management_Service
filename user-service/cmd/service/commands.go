@@ -3,7 +3,8 @@ package main
 import (
 	"context"
 	"errors"
-	"log"
+	"log/slog"
+	"os"
 	"time"
 
 	usersvc "user-service/internal/user"
@@ -47,9 +48,10 @@ func newCommandHandler(service *usersvc.Service, nc *nats.Conn) *commandHandler 
 func handleSubscribe(nc *nats.Conn, subject string, handler func(*nats.Msg)) {
 	_, err := nc.Subscribe(subject, handler) // subscribe to the given NATS subject with the provided handler function
 	if err != nil {
-		log.Fatalf("failed to subscribe %s: %v", subject, err)
+		slog.Error("failed to subscribe subject", "subject", subject, "error", err)
+		os.Exit(1)
 	} else {
-		log.Printf("subscribed to %s", subject)
+		slog.Info("subscribed to subject", "subject", subject)
 	}
 }
 
@@ -91,7 +93,7 @@ func (h *commandHandler) handleCreateUser(msg *nats.Msg) {
 	reply(msg, commandOK(mapped))
 
 	if err := h.publishEvent(contract.SubjectUserEventCreated, "user.created", mapped); err != nil {
-		log.Printf("failed to publish %s: %v", contract.SubjectUserEventCreated, err)
+		slog.Error("failed to publish event", "subject", contract.SubjectUserEventCreated, "error", err)
 	}
 }
 
@@ -128,7 +130,7 @@ func (h *commandHandler) handleUpdateUser(msg *nats.Msg) {
 	reply(msg, commandOK(mapped))
 
 	if err := h.publishEvent(contract.SubjectUserEventUpdated, "user.updated", mapped); err != nil {
-		log.Printf("failed to publish %s: %v", contract.SubjectUserEventUpdated, err)
+		slog.Error("failed to publish event", "subject", contract.SubjectUserEventUpdated, "error", err)
 	}
 }
 
@@ -147,18 +149,19 @@ func (h *commandHandler) handleDeleteUser(msg *nats.Msg) {
 	reply(msg, commandOK(map[string]string{"message": "user deleted"}))
 
 	if err := h.publishEvent(contract.SubjectUserEventDeleted, "user.deleted", map[string]string{"userId": req.Data.ID}); err != nil {
-		log.Printf("failed to publish %s: %v", contract.SubjectUserEventDeleted, err)
+		slog.Error("failed to publish event", "subject", contract.SubjectUserEventDeleted, "error", err)
 	}
 }
 
+// handle NATS messages and sending responses
 func reply[T any](msg *nats.Msg, resp contract.CommandResponse[T]) {
 	payload, err := contract.ToJSON(resp)
 	if err != nil {
-		log.Printf("failed to marshal response: %v", err)
+		slog.Error("failed to marshal response", "error", err)
 		return
 	}
 	if err := msg.Respond(payload); err != nil {
-		log.Printf("failed to respond command: %v", err)
+		slog.Error("failed to respond command", "error", err)
 	}
 }
 

@@ -1,7 +1,7 @@
 package main
 
 import (
-	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -22,6 +22,9 @@ const (
 )
 
 func main() {
+	// set up logging with slog to output JSON logs as a standard output.
+	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, nil)))
+
 	natsURL := os.Getenv("NATS_URL")
 	if natsURL == "" {
 		natsURL = defaultNATSURL
@@ -29,11 +32,12 @@ func main() {
 
 	nc, err := nats.Connect(natsURL)
 	if err != nil {
-		log.Fatalf("failed to connect to nats: %v", err) // log the error and terminate the process.
+		slog.Error("failed to connect to nats", "url", natsURL, "error", err)
+		os.Exit(1)
 	}
 	defer func() {
 		if err := nc.Drain(); err != nil {
-			log.Printf("failed to drain nats connection: %v", err)
+			slog.Error("failed to drain nats connection", "error", err)
 		}
 	}() // ensure all pending messages are sent before closing the connection.
 
@@ -44,7 +48,8 @@ func main() {
 
 	// subscribe to user events and broadcast them to connected WebSocket clients.
 	if err := ws.SubscribeUserEvents(nc, wsHub); err != nil {
-		log.Fatalf("failed to subscribe user events: %v", err)
+		slog.Error("failed to subscribe user events", "error", err)
+		os.Exit(1)
 	}
 
 	router := chi.NewRouter()
@@ -54,7 +59,7 @@ func main() {
 		w.WriteHeader(http.StatusOK)
 		_, err := w.Write([]byte(`{"status":"ok"}`))
 		if err != nil {
-			log.Printf("failed to write health response: %v", err)
+			slog.Error("failed to write health response", "error", err)
 		}
 	})
 	// serve OpenAPI spec and Swagger UI
@@ -81,9 +86,10 @@ func main() {
 	router.Delete("/users/{id}", userHandler.DeleteUser)
 	router.Get("/ws", wsHandler.Handle)
 
-	log.Printf("API server listening on %s", addr)
+	slog.Info("API server listening", "addr", addr)
 
 	if err := http.ListenAndServe(addr, router); err != nil {
-		log.Fatalf("server failed: %v", err)
+		slog.Error("server failed", "error", err)
+		os.Exit(1)
 	}
 }

@@ -2,7 +2,7 @@ package ws
 
 import (
 	"fmt"
-	"log"
+	"log/slog"
 
 	"user-service/pkg/contract"
 
@@ -24,7 +24,7 @@ func SubscribeUserEvents(nc *nats.Conn, hub *Hub) error {
 			return fmt.Errorf("subscribe %s: %w", currentSubject, err)
 		}
 
-		log.Printf("subscribed to %s", currentSubject)
+		slog.Info("subscribed to user event subject", "subject", currentSubject)
 	}
 
 	return nil

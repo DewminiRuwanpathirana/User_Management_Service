@@ -3,12 +3,12 @@ run:
 
 linters:
   enable:
-    - errcheck 
-    - gosimple
-    - govet
-    - ineffassign
-    - staticcheck
-    - unused
+    - errcheck # Detects ignored/unhandled errors.
+    - gosimple # Suggests simpler equivalent Go code.
+    - govet # Reports suspicious constructs (printf mismatch, unreachable code, etc.).
+    - ineffassign # Finds assignments to variables that are never used.
+    - staticcheck # Advanced static analysis for correctness and performance issues.
+    - unused # Finds unused variables, functions, types, and constants.
 
 issues:
   exclude-use-default: false
