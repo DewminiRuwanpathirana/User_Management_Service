@@ -19,6 +19,7 @@ func SubscribeUserEvents(nc *nats.Conn, hub *Hub) error {
 	for _, subject := range eventSubjects {
 		currentSubject := subject
 		if _, err := nc.Subscribe(currentSubject, func(msg *nats.Msg) {
+			slog.Info("received user event", "subject", currentSubject, "payload_size", len(msg.Data))
 			hub.Broadcast(msg.Data)
 		}); err != nil {
 			return fmt.Errorf("subscribe %s: %w", currentSubject, err)

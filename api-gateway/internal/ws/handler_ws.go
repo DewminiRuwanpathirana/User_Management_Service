@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
 
 	"user-service/pkg/usersclient"
@@ -35,28 +36,35 @@ func NewHandler(client usersclient.Client, hub *Hub) *Handler {
 func (h *Handler) Handle(w http.ResponseWriter, r *http.Request) {
 	conn, err := h.upgrader.Upgrade(w, r, nil)
 	if err != nil {
+		slog.Error("ws upgrade failed", "path", r.URL.Path, "error", err)
 		return
 	}
 	client := h.hub.register(conn)
+	slog.Info("ws client connected", "remote_addr", conn.RemoteAddr().String())
 	defer h.hub.unregister(client)
 
 	for {
 		_, message, err := conn.ReadMessage() // read a message from the WebSocket connection
 		if err != nil {
+			slog.Info("ws client disconnected", "remote_addr", conn.RemoteAddr().String(), "error", err)
 			break
 		}
 
 		var req RequestMessage
 		if err := json.Unmarshal(message, &req); err != nil {
+			slog.Warn("ws invalid message", "remote_addr", conn.RemoteAddr().String(), "error", err)
 			if err := client.writeJSON(fail("", "bad_request", "invalid message")); err != nil {
+				slog.Error("ws write error response failed", "remote_addr", conn.RemoteAddr().String(), "error", err)
 				break
 			}
 			continue
 		}
+		slog.Info("ws action received", "remote_addr", conn.RemoteAddr().String(), "action", req.Action, "request_id", req.RequestID)
 
 		resp := h.process(r.Context(), req)
 		if shouldWriteDirectResponse(req.Action, resp) {
 			if err := client.writeJSON(resp); err != nil {
+				slog.Error("ws write direct response failed", "remote_addr", conn.RemoteAddr().String(), "action", req.Action, "request_id", req.RequestID, "error", err)
 				break
 			}
 		}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"user-service/pkg/contract"
@@ -125,8 +126,10 @@ func (c *NATSClient) Delete(ctx context.Context, userID string) error {
 
 // send a request and receive a response from the user service via NATS
 func request[T any, R any](ctx context.Context, c *NATSClient, subject string, req contract.CommandRequest[R]) (*contract.CommandResponse[T], error) {
+	start := time.Now()
 	data, err := contract.ToJSON(req)
 	if err != nil {
+		slog.Error("rpc request marshal failed", "subject", subject, "request_id", req.RequestID, "error", err)
 		return nil, err
 	}
 
@@ -134,19 +137,25 @@ func request[T any, R any](ctx context.Context, c *NATSClient, subject string, r
 	defer cancel() // cancel the context to release resources if the request completes before the timeout
 
 	// send the request and wait for a response from the user service via NATS
+	slog.Info("rpc request start", "subject", subject, "request_id", req.RequestID, "timeout_ms", c.timeout.Milliseconds())
 	msg, err := c.nc.RequestWithContext(timeoutCtx, subject, data)
 	if err != nil {
+		slog.Error("rpc request failed", "subject", subject, "request_id", req.RequestID, "duration_ms", time.Since(start).Milliseconds(), "error", err)
 		return nil, err
 	}
 
 	resp, err := contract.FromJSON[contract.CommandResponse[T]](msg.Data)
 	if err != nil {
+		slog.Error("rpc response unmarshal failed", "subject", subject, "request_id", req.RequestID, "duration_ms", time.Since(start).Milliseconds(), "error", err)
 		return nil, err
 	}
 
 	if !resp.OK {
-		return nil, mapCommandError(resp.Error)
+		mappedErr := mapCommandError(resp.Error)
+		slog.Warn("rpc response returned error", "subject", subject, "request_id", req.RequestID, "duration_ms", time.Since(start).Milliseconds(), "error", mappedErr)
+		return nil, mappedErr
 	}
+	slog.Info("rpc request success", "subject", subject, "request_id", req.RequestID, "duration_ms", time.Since(start).Milliseconds())
 
 	return &resp, nil
 }

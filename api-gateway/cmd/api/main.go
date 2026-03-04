@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"time"
 
 	"gotrainingproject/internal/httpapi"
 	"gotrainingproject/internal/ws"
@@ -53,6 +54,7 @@ func main() {
 	}
 
 	router := chi.NewRouter()
+	router.Use(requestLogMiddleware) // middleware to log incoming HTTP requests and their response status and duration.
 
 	router.Get("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -92,4 +94,33 @@ func main() {
 		slog.Error("server failed", "error", err)
 		os.Exit(1)
 	}
+}
+
+// statusRecorder is a wrapper around http.ResponseWriter that captures the status code for logging purposes.
+type statusRecorder struct {
+	http.ResponseWriter
+	status int
+}
+
+// override the WriteHeader method to capture the status code for logging purposes.
+func (r *statusRecorder) WriteHeader(code int) {
+	r.status = code
+	r.ResponseWriter.WriteHeader(code)
+}
+
+// requestLogMiddleware is an HTTP middleware that logs incoming requests and their response status and duration using slog.
+func requestLogMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		start := time.Now()
+		rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
+
+		next.ServeHTTP(rec, r)
+
+		slog.Info("rest request completed",
+			"method", r.Method,
+			"path", r.URL.Path,
+			"status", rec.status,
+			"duration_ms", time.Since(start).Milliseconds(),
+		)
+	})
 }

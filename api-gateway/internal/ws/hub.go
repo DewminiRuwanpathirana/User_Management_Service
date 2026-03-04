@@ -1,6 +1,7 @@
 package ws
 
 import (
+	"log/slog"
 	"sync"
 
 	"github.com/gorilla/websocket"
@@ -53,14 +54,18 @@ func (h *Hub) run() {
 		select {
 		case client := <-h.registerCh:
 			h.clients[client] = struct{}{}
+			slog.Info("ws client registered", "clients_count", len(h.clients))
 		case client := <-h.removeCh:
 			if _, exists := h.clients[client]; exists {
 				delete(h.clients, client)
+				slog.Info("ws client unregistered", "clients_count", len(h.clients))
 				_ = client.conn.Close()
 			}
 		case message := <-h.broadcast:
+			slog.Info("ws broadcasting message", "clients_count", len(h.clients), "message_size", len(message))
 			for client := range h.clients { // iterate over all connected clients and send the broadcast message
 				if err := client.writeText(message); err != nil {
+					slog.Error("ws broadcast write failed; removing client", "error", err)
 					delete(h.clients, client)
 					_ = client.conn.Close()
 				}
@@ -81,5 +86,6 @@ func (h *Hub) unregister(client *clientConn) {
 }
 
 func (h *Hub) Broadcast(message []byte) {
+	slog.Debug("ws message enqueued for broadcast", "message_size", len(message))
 	h.broadcast <- message
 }

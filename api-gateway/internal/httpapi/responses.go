@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"encoding/json"
+	"log/slog"
 	"net/http"
 )
 
@@ -16,6 +17,7 @@ func writeJSON(w http.ResponseWriter, statusCode int, payload any) {
 	w.WriteHeader(statusCode)
 
 	if err := json.NewEncoder(w).Encode(payload); err != nil {
+		slog.Error("failed to encode json response", "status_code", statusCode, "error", err)
 		http.Error(w, "failed to write response", http.StatusInternalServerError)
 	}
 }

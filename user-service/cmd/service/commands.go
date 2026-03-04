@@ -56,14 +56,18 @@ func handleSubscribe(nc *nats.Conn, subject string, handler func(*nats.Msg)) {
 }
 
 func (h *commandHandler) handleListUsers(msg *nats.Msg) {
+	start := time.Now()
 	_, err := contract.FromJSON[contract.CommandRequest[map[string]any]](msg.Data) // parse the incoming NATS message data into a CommandRequest with an empty map as the data payload
 	if err != nil {
+		slog.Warn("rpc list users invalid request", "subject", msg.Subject, "error", err)
 		reply(msg, commandError[[]userDTO]("BAD_REQUEST", "invalid request"))
 		return
 	}
+	slog.Info("rpc list users start", "subject", msg.Subject)
 
 	users, err := h.service.ListUsers(context.Background())
 	if err != nil {
+		slog.Error("rpc list users failed", "subject", msg.Subject, "error", err)
 		replyError[[]userDTO](msg, err, "failed to list users")
 		return
 	}
@@ -74,23 +78,29 @@ func (h *commandHandler) handleListUsers(msg *nats.Msg) {
 	}
 
 	reply(msg, commandOK(out)) // send a successful response back to the NATS message
+	slog.Info("rpc list users success", "subject", msg.Subject, "count", len(out), "duration_ms", time.Since(start).Milliseconds())
 }
 
 func (h *commandHandler) handleCreateUser(msg *nats.Msg) {
+	start := time.Now()
 	req, err := contract.FromJSON[contract.CommandRequest[usersvc.CreateInput]](msg.Data) // parse the incoming NATS message data into a CommandRequest with CreateInput as the data payload
 	if err != nil {
+		slog.Warn("rpc create user invalid request", "subject", msg.Subject, "error", err)
 		reply(msg, commandError[userDTO]("BAD_REQUEST", "invalid request"))
 		return
 	}
+	slog.Info("rpc create user start", "subject", msg.Subject, "request_id", req.RequestID)
 
 	created, err := h.service.CreateUser(context.Background(), req.Data)
 	if err != nil {
+		slog.Error("rpc create user failed", "subject", msg.Subject, "request_id", req.RequestID, "error", err)
 		replyError[userDTO](msg, err, "failed to create user")
 		return
 	}
 
 	mapped := mapUser(*created) // map the created user returned by the service into a userDTO
 	reply(msg, commandOK(mapped))
+	slog.Info("rpc create user success", "subject", msg.Subject, "request_id", req.RequestID, "user_id", mapped.UserID, "duration_ms", time.Since(start).Milliseconds())
 
 	if err := h.publishEvent(contract.SubjectUserEventCreated, "user.created", mapped); err != nil {
 		slog.Error("failed to publish event", "subject", contract.SubjectUserEventCreated, "error", err)
@@ -98,36 +108,46 @@ func (h *commandHandler) handleCreateUser(msg *nats.Msg) {
 }
 
 func (h *commandHandler) handleGetUser(msg *nats.Msg) {
+	start := time.Now()
 	req, err := contract.FromJSON[contract.CommandRequest[idRequest]](msg.Data)
 	if err != nil {
+		slog.Warn("rpc get user invalid request", "subject", msg.Subject, "error", err)
 		reply(msg, commandError[userDTO]("BAD_REQUEST", "invalid request"))
 		return
 	}
+	slog.Info("rpc get user start", "subject", msg.Subject, "request_id", req.RequestID, "user_id", req.Data.ID)
 
 	found, err := h.service.GetUserByID(context.Background(), req.Data.ID)
 	if err != nil {
+		slog.Error("rpc get user failed", "subject", msg.Subject, "request_id", req.RequestID, "user_id", req.Data.ID, "error", err)
 		replyError[userDTO](msg, err, "failed to get user")
 		return
 	}
 
 	reply(msg, commandOK(mapUser(*found)))
+	slog.Info("rpc get user success", "subject", msg.Subject, "request_id", req.RequestID, "user_id", req.Data.ID, "duration_ms", time.Since(start).Milliseconds())
 }
 
 func (h *commandHandler) handleUpdateUser(msg *nats.Msg) {
+	start := time.Now()
 	req, err := contract.FromJSON[contract.CommandRequest[updateUserRequest]](msg.Data)
 	if err != nil {
+		slog.Warn("rpc update user invalid request", "subject", msg.Subject, "error", err)
 		reply(msg, commandError[userDTO]("BAD_REQUEST", "invalid request"))
 		return
 	}
+	slog.Info("rpc update user start", "subject", msg.Subject, "request_id", req.RequestID, "user_id", req.Data.ID)
 
 	updated, err := h.service.UpdateUser(context.Background(), req.Data.ID, req.Data.UpdateInput)
 	if err != nil {
+		slog.Error("rpc update user failed", "subject", msg.Subject, "request_id", req.RequestID, "user_id", req.Data.ID, "error", err)
 		replyError[userDTO](msg, err, "failed to update user")
 		return
 	}
 
 	mapped := mapUser(*updated)
 	reply(msg, commandOK(mapped))
+	slog.Info("rpc update user success", "subject", msg.Subject, "request_id", req.RequestID, "user_id", mapped.UserID, "duration_ms", time.Since(start).Milliseconds())
 
 	if err := h.publishEvent(contract.SubjectUserEventUpdated, "user.updated", mapped); err != nil {
 		slog.Error("failed to publish event", "subject", contract.SubjectUserEventUpdated, "error", err)
@@ -135,18 +155,23 @@ func (h *commandHandler) handleUpdateUser(msg *nats.Msg) {
 }
 
 func (h *commandHandler) handleDeleteUser(msg *nats.Msg) {
+	start := time.Now()
 	req, err := contract.FromJSON[contract.CommandRequest[idRequest]](msg.Data)
 	if err != nil {
+		slog.Warn("rpc delete user invalid request", "subject", msg.Subject, "error", err)
 		reply(msg, commandError[map[string]string]("BAD_REQUEST", "invalid request"))
 		return
 	}
+	slog.Info("rpc delete user start", "subject", msg.Subject, "request_id", req.RequestID, "user_id", req.Data.ID)
 
 	if err := h.service.DeleteUser(context.Background(), req.Data.ID); err != nil {
+		slog.Error("rpc delete user failed", "subject", msg.Subject, "request_id", req.RequestID, "user_id", req.Data.ID, "error", err)
 		replyError[map[string]string](msg, err, "failed to delete user")
 		return
 	}
 
 	reply(msg, commandOK(map[string]string{"message": "user deleted"}))
+	slog.Info("rpc delete user success", "subject", msg.Subject, "request_id", req.RequestID, "user_id", req.Data.ID, "duration_ms", time.Since(start).Milliseconds())
 
 	if err := h.publishEvent(contract.SubjectUserEventDeleted, "user.deleted", map[string]string{"userId": req.Data.ID}); err != nil {
 		slog.Error("failed to publish event", "subject", contract.SubjectUserEventDeleted, "error", err)
@@ -209,7 +234,16 @@ func (h *commandHandler) publishEvent(subject, eventType string, data any) error
 		return err
 	}
 
-	return h.nc.Publish(subject, payload)
+	if err := h.nc.Publish(subject, payload); err != nil {
+		return err
+	}
+
+	slog.Info("event publish succeeded",
+		"subject", subject,
+		"event_type", eventType,
+		"event_id", event.EventID,
+	)
+	return nil
 }
 
 func mapUser(in usersvc.User) userDTO {
