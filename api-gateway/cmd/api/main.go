@@ -1,16 +1,16 @@
 package main
 
 import (
-	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
 	"runtime"
+	"time"
 
 	"gotrainingproject/internal/httpapi"
-	"gotrainingproject/internal/user"
 	"gotrainingproject/internal/ws"
-	"gotrainingproject/pkg/usersclient"
+	"user-service/pkg/usersclient"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/nats-io/nats.go"
@@ -23,6 +23,9 @@ const (
 )
 
 func main() {
+	// set up logging with slog to output JSON logs as a standard output.
+	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, nil)))
+
 	natsURL := os.Getenv("NATS_URL")
 	if natsURL == "" {
 		natsURL = defaultNATSURL
@@ -30,46 +33,40 @@ func main() {
 
 	nc, err := nats.Connect(natsURL)
 	if err != nil {
-		log.Fatalf("failed to connect to nats: %v", err) // log the error and terminate the process.
+		slog.Error("failed to connect to nats", "url", natsURL, "error", err)
+		os.Exit(1)
 	}
-	defer nc.Drain() // ensure all pending messages are sent before closing the connection.
+	defer func() {
+		if err := nc.Drain(); err != nil {
+			slog.Error("failed to drain nats connection", "error", err)
+		}
+	}() // ensure all pending messages are sent before closing the connection.
 
 	usersNATSClient := usersclient.New(nc, 0)
-	userRepo := user.NewNATSRepository(usersNATSClient)
-	userService := user.NewService(userRepo)
 	wsHub := ws.NewHub()
-	userHandler := httpapi.NewUserHandler(userService, wsHub)
-	wsHandler := ws.NewHandler(userService, wsHub)
+	userHandler := httpapi.NewUserHandler(usersNATSClient)
+	wsHandler := ws.NewHandler(usersNATSClient, wsHub)
 
-	eventSubjects := []string{
-		"user.event.created",
-		"user.event.updated",
-		"user.event.deleted",
-	}
-	for _, subject := range eventSubjects {
-		currentSubject := subject
-		_, err := nc.Subscribe(currentSubject, func(msg *nats.Msg) {
-			wsHub.Broadcast(msg.Data)
-		})
-		if err != nil {
-			log.Fatalf("failed to subscribe %s: %v", currentSubject, err)
-		}
-		log.Printf("subscribed to %s", currentSubject)
+	// subscribe to user events and broadcast them to connected WebSocket clients.
+	if err := ws.SubscribeUserEvents(nc, wsHub); err != nil {
+		slog.Error("failed to subscribe user events", "error", err)
+		os.Exit(1)
 	}
 
 	router := chi.NewRouter()
+	router.Use(requestLogMiddleware) // middleware to log incoming HTTP requests and their response status and duration.
 
 	router.Get("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
 		_, err := w.Write([]byte(`{"status":"ok"}`))
 		if err != nil {
-			log.Printf("failed to write health response: %v", err)
+			slog.Error("failed to write health response", "error", err)
 		}
 	})
 	// serve OpenAPI spec and Swagger UI
 	router.Get("/doc/openapi.yaml", func(w http.ResponseWriter, r *http.Request) {
-		_, currentFile, _, ok := runtime.Caller(0)
+		_, currentFile, _, ok := runtime.Caller(0) // get the file path of the current source code file
 		if !ok {
 			http.NotFound(w, r)
 			return
@@ -91,9 +88,39 @@ func main() {
 	router.Delete("/users/{id}", userHandler.DeleteUser)
 	router.Get("/ws", wsHandler.Handle)
 
-	log.Printf("API server listening on %s", addr)
+	slog.Info("API server listening", "addr", addr)
 
 	if err := http.ListenAndServe(addr, router); err != nil {
-		log.Fatalf("server failed: %v", err)
+		slog.Error("server failed", "error", err)
+		os.Exit(1)
 	}
+}
+
+// statusRecorder is a wrapper around http.ResponseWriter that captures the status code for logging purposes.
+type statusRecorder struct {
+	http.ResponseWriter
+	status int
+}
+
+// override the WriteHeader method to capture the status code for logging purposes.
+func (r *statusRecorder) WriteHeader(code int) {
+	r.status = code
+	r.ResponseWriter.WriteHeader(code)
+}
+
+// requestLogMiddleware is an HTTP middleware that logs incoming requests and their response status and duration using slog.
+func requestLogMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		start := time.Now()
+		rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
+
+		next.ServeHTTP(rec, r)
+
+		slog.Info("rest request completed",
+			"method", r.Method,
+			"path", r.URL.Path,
+			"status", rec.status,
+			"duration_ms", time.Since(start).Milliseconds(),
+		)
+	})
 }

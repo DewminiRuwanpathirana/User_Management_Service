@@ -1,6 +1,7 @@
 package ws
 
 import (
+	"log/slog"
 	"sync"
 
 	"github.com/gorilla/websocket"
@@ -11,7 +12,8 @@ type clientConn struct {
 	mu   sync.Mutex
 }
 
-// helper method to send JSON and Text messages to the client connection in a thread-safe manner.
+// send a JSON message to the client connection in a thread-safe manner
+// multiple goroutines may try writing to the same websocket connection at the same time
 func (c *clientConn) writeJSON(value any) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -19,6 +21,7 @@ func (c *clientConn) writeJSON(value any) error {
 	return c.conn.WriteJSON(value)
 }
 
+// send a text message to the client connection in a thread-safe manner.
 func (c *clientConn) writeText(message []byte) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -27,53 +30,62 @@ func (c *clientConn) writeText(message []byte) error {
 }
 
 type Hub struct {
-	mu      sync.RWMutex
-	clients map[*clientConn]struct{}
+	clients    map[*clientConn]struct{}
+	registerCh chan *clientConn
+	removeCh   chan *clientConn
+	broadcast  chan []byte
 }
 
 func NewHub() *Hub {
-	return &Hub{
-		clients: make(map[*clientConn]struct{}),
+	h := &Hub{
+		clients:    make(map[*clientConn]struct{}),
+		registerCh: make(chan *clientConn),
+		removeCh:   make(chan *clientConn),
+		broadcast:  make(chan []byte, 64), // up to 64 broadcast messages can queue without blocking sender
+	}
+	// go starts a new goroutine to run the hub's main loop
+	go h.run()
+	return h
+}
+
+// hub’s background goroutine loop that continuously listens
+func (h *Hub) run() {
+	for { // infinite loop to keep the hub running and processing incoming events
+		select {
+		case client := <-h.registerCh:
+			h.clients[client] = struct{}{}
+			slog.Info("ws client registered", "clients_count", len(h.clients))
+		case client := <-h.removeCh:
+			if _, exists := h.clients[client]; exists {
+				delete(h.clients, client)
+				slog.Info("ws client unregistered", "clients_count", len(h.clients))
+				_ = client.conn.Close()
+			}
+		case message := <-h.broadcast:
+			slog.Info("ws broadcasting message", "clients_count", len(h.clients), "message_size", len(message))
+			for client := range h.clients { // iterate over all connected clients and send the broadcast message
+				if err := client.writeText(message); err != nil {
+					slog.Error("ws broadcast write failed; removing client", "error", err)
+					delete(h.clients, client)
+					_ = client.conn.Close()
+				}
+			}
+		}
 	}
 }
 
-// Adding clients to the hub and removing them when they disconnect.
+// register a new client connection to the hub and return the clientConn instance
 func (h *Hub) register(conn *websocket.Conn) *clientConn {
 	client := &clientConn{conn: conn}
-
-	h.mu.Lock()
-	h.clients[client] = struct{}{}
-	h.mu.Unlock()
-
+	h.registerCh <- client // send the clientConn instance to the register channel to be added to the clients map
 	return client
 }
 
 func (h *Hub) unregister(client *clientConn) {
-	h.mu.Lock()
-	delete(h.clients, client)
-	h.mu.Unlock()
-
-	_ = client.conn.Close()
+	h.removeCh <- client
 }
 
 func (h *Hub) Broadcast(message []byte) {
-	h.BroadcastExcept(message, nil)
-}
-
-func (h *Hub) BroadcastExcept(message []byte, excluded *clientConn) {
-	h.mu.RLock()
-	clients := make([]*clientConn, 0, len(h.clients))
-	for client := range h.clients {
-		if client == excluded {
-			continue
-		}
-		clients = append(clients, client)
-	}
-	h.mu.RUnlock()
-
-	for _, client := range clients {
-		if err := client.writeText(message); err != nil {
-			h.unregister(client)
-		}
-	}
+	slog.Debug("ws message enqueued for broadcast", "message_size", len(message))
+	h.broadcast <- message
 }

@@ -4,20 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"time"
 
-	contract "shared/contract"
+	"user-service/pkg/contract"
 
 	"github.com/nats-io/nats.go"
-)
-
-// API-Gateway publishes these commands to NATS subjects.
-const (
-	SubjectCreate = "user.command.create"
-	SubjectList   = "user.command.list"
-	SubjectGet    = "user.command.get"
-	SubjectUpdate = "user.command.update"
-	SubjectDelete = "user.command.delete"
 )
 
 const defaultTimeout = 5 * time.Second
@@ -26,6 +18,7 @@ var ErrBadRequest = errors.New("users client bad request")
 var ErrNotFound = errors.New("users client not found")
 var ErrService = errors.New("users client service error")
 
+// Client defines the interface for interacting with the user service.
 type Client interface {
 	Create(ctx context.Context, input CreateUserInput) (*User, error)
 	List(ctx context.Context) ([]User, error)
@@ -56,7 +49,7 @@ func (c *NATSClient) Create(ctx context.Context, input CreateUserInput) (*User, 
 		Data:      input,
 	}
 
-	resp, err := request[User](ctx, c, SubjectCreate, req)
+	resp, err := request[User](ctx, c, contract.SubjectUserCommandCreate, req)
 	if err != nil {
 		return nil, err
 	}
@@ -73,7 +66,7 @@ func (c *NATSClient) List(ctx context.Context) ([]User, error) {
 		Data:      map[string]any{},
 	}
 
-	resp, err := request[[]User](ctx, c, SubjectList, req)
+	resp, err := request[[]User](ctx, c, contract.SubjectUserCommandList, req)
 	if err != nil {
 		return nil, err
 	}
@@ -90,7 +83,7 @@ func (c *NATSClient) Get(ctx context.Context, userID string) (*User, error) {
 		Data:      IDRequest{ID: userID},
 	}
 
-	resp, err := request[User](ctx, c, SubjectGet, req)
+	resp, err := request[User](ctx, c, contract.SubjectUserCommandGet, req)
 	if err != nil {
 		return nil, err
 	}
@@ -110,7 +103,7 @@ func (c *NATSClient) Update(ctx context.Context, userID string, input UpdateUser
 		},
 	}
 
-	resp, err := request[User](ctx, c, SubjectUpdate, req)
+	resp, err := request[User](ctx, c, contract.SubjectUserCommandUpdate, req)
 	if err != nil {
 		return nil, err
 	}
@@ -127,43 +120,57 @@ func (c *NATSClient) Delete(ctx context.Context, userID string) error {
 		Data:      IDRequest{ID: userID},
 	}
 
-	_, err := request[map[string]any](ctx, c, SubjectDelete, req)
+	_, err := request[map[string]any](ctx, c, contract.SubjectUserCommandDelete, req)
 	return err
 }
 
-// gateway sends a request to one subject and waits for one response message.
+// send a request and receive a response from the user service via NATS
 func request[T any, R any](ctx context.Context, c *NATSClient, subject string, req contract.CommandRequest[R]) (*contract.CommandResponse[T], error) {
+	start := time.Now()
 	data, err := contract.ToJSON(req)
 	if err != nil {
+		slog.Error("rpc request marshal failed", "subject", subject, "request_id", req.RequestID, "error", err)
 		return nil, err
 	}
 
 	timeoutCtx, cancel := context.WithTimeout(ctx, c.timeout)
-	defer cancel()
+	defer cancel() // cancel the context to release resources if the request completes before the timeout
 
+	// send the request and wait for a response from the user service via NATS
+	slog.Info("rpc request start", "subject", subject, "request_id", req.RequestID, "timeout_ms", c.timeout.Milliseconds())
 	msg, err := c.nc.RequestWithContext(timeoutCtx, subject, data)
 	if err != nil {
+		slog.Error("rpc request failed", "subject", subject, "request_id", req.RequestID, "duration_ms", time.Since(start).Milliseconds(), "error", err)
 		return nil, err
 	}
 
 	resp, err := contract.FromJSON[contract.CommandResponse[T]](msg.Data)
 	if err != nil {
+		slog.Error("rpc response unmarshal failed", "subject", subject, "request_id", req.RequestID, "duration_ms", time.Since(start).Milliseconds(), "error", err)
 		return nil, err
 	}
 
 	if !resp.OK {
-		if resp.Error != nil {
-			switch resp.Error.Code {
-			case "BAD_REQUEST":
-				return nil, fmt.Errorf("%w: %s", ErrBadRequest, resp.Error.Message)
-			case "NOT_FOUND":
-				return nil, fmt.Errorf("%w: %s", ErrNotFound, resp.Error.Message)
-			default:
-				return nil, fmt.Errorf("%w (%s): %s", ErrService, resp.Error.Code, resp.Error.Message)
-			}
-		}
-		return nil, ErrService
+		mappedErr := mapCommandError(resp.Error)
+		slog.Warn("rpc response returned error", "subject", subject, "request_id", req.RequestID, "duration_ms", time.Since(start).Milliseconds(), "error", mappedErr)
+		return nil, mappedErr
 	}
+	slog.Info("rpc request success", "subject", subject, "request_id", req.RequestID, "duration_ms", time.Since(start).Milliseconds())
 
 	return &resp, nil
+}
+
+func mapCommandError(errResp *contract.CommandError) error {
+	if errResp == nil {
+		return ErrService
+	}
+
+	switch errResp.Code {
+	case "BAD_REQUEST":
+		return fmt.Errorf("%w: %s", ErrBadRequest, errResp.Message)
+	case "NOT_FOUND":
+		return fmt.Errorf("%w: %s", ErrNotFound, errResp.Message)
+	default:
+		return fmt.Errorf("%w (%s): %s", ErrService, errResp.Code, errResp.Message)
+	}
 }

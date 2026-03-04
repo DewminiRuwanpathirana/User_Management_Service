@@ -4,64 +4,54 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
 	"github.com/go-chi/chi/v5"
-	"gotrainingproject/internal/user"
+	"user-service/pkg/usersclient"
 )
 
 const testUserID = "550e8400-e29b-41d4-a716-446655440000"
 
-type testRepository struct {
-	createResult *user.User
+type testClient struct {
+	createResult *usersclient.User
 	createErr    error
-	listResult   []user.User
+	listResult   []usersclient.User
 	listErr      error
-	getResult    *user.User
+	getResult    *usersclient.User
 	getErr       error
 }
 
-func (r *testRepository) Create(ctx context.Context, input user.CreateUserInput) (*user.User, error) {
-	if r.createErr != nil {
-		return nil, r.createErr
+func (c *testClient) Create(ctx context.Context, input usersclient.CreateUserInput) (*usersclient.User, error) {
+	if c.createErr != nil {
+		return nil, c.createErr
 	}
-
-	out := r.createResult
-	if out == nil || out.UserID == "" {
-		out = &user.User{
-			UserID:    testUserID,
-			FirstName: input.FirstName,
-			LastName:  input.LastName,
-			Email:     input.Email,
-			Status:    input.Status,
-		}
+	if c.createResult != nil {
+		return c.createResult, nil
 	}
-
-	return out, nil
+	return &usersclient.User{UserID: testUserID, FirstName: input.FirstName, LastName: input.LastName, Email: input.Email}, nil
 }
 
-func (r *testRepository) List(ctx context.Context) ([]user.User, error) {
-	return r.listResult, r.listErr
+func (c *testClient) List(ctx context.Context) ([]usersclient.User, error) {
+	return c.listResult, c.listErr
 }
 
-func (r *testRepository) GetByID(ctx context.Context, userID string) (*user.User, error) {
-	return r.getResult, r.getErr
+func (c *testClient) Get(ctx context.Context, userID string) (*usersclient.User, error) {
+	return c.getResult, c.getErr
 }
 
-func (r *testRepository) Update(ctx context.Context, userID string, input user.UpdateUserInput) (*user.User, error) {
+func (c *testClient) Update(ctx context.Context, userID string, input usersclient.UpdateUserInput) (*usersclient.User, error) {
 	return nil, nil
 }
 
-func (r *testRepository) Delete(ctx context.Context, userID string) error {
+func (c *testClient) Delete(ctx context.Context, userID string) error {
 	return nil
 }
 
 func TestCreateUserHandlerInvalidJSON(t *testing.T) {
-	repo := &testRepository{}
-	service := user.NewService(repo)
-	handler := NewUserHandler(service, nil)
+	handler := NewUserHandler(&testClient{})
 
 	req := httptest.NewRequest(http.MethodPost, "/users", bytes.NewBufferString("{invalid"))
 	res := httptest.NewRecorder()
@@ -74,15 +64,9 @@ func TestCreateUserHandlerInvalidJSON(t *testing.T) {
 }
 
 func TestCreateUserHandlerSuccess(t *testing.T) {
-	repo := &testRepository{}
-	service := user.NewService(repo)
-	handler := NewUserHandler(service, nil)
+	handler := NewUserHandler(&testClient{})
 
-	body := map[string]any{
-		"firstName": "John",
-		"lastName":  "Doe",
-		"email":     "john@example.com",
-	}
+	body := map[string]any{"firstName": "John", "lastName": "Doe", "email": "john@example.com"}
 	bodyBytes, _ := json.Marshal(body)
 
 	req := httptest.NewRequest(http.MethodPost, "/users", bytes.NewReader(bodyBytes))
@@ -97,15 +81,9 @@ func TestCreateUserHandlerSuccess(t *testing.T) {
 }
 
 func TestCreateUserHandlerValidationError(t *testing.T) {
-	repo := &testRepository{}
-	service := user.NewService(repo)
-	handler := NewUserHandler(service, nil)
+	handler := NewUserHandler(&testClient{createErr: usersclient.ErrBadRequest})
 
-	body := map[string]any{
-		"firstName": "J",
-		"lastName":  "D",
-		"email":     "bad-email",
-	}
+	body := map[string]any{"firstName": "J", "lastName": "D", "email": "bad-email"}
 	bodyBytes, _ := json.Marshal(body)
 
 	req := httptest.NewRequest(http.MethodPost, "/users", bytes.NewReader(bodyBytes))
@@ -120,13 +98,7 @@ func TestCreateUserHandlerValidationError(t *testing.T) {
 }
 
 func TestListUsersHandlerSuccess(t *testing.T) {
-	repo := &testRepository{
-		listResult: []user.User{
-			{UserID: testUserID, FirstName: "John"},
-		},
-	}
-	service := user.NewService(repo)
-	handler := NewUserHandler(service, nil)
+	handler := NewUserHandler(&testClient{listResult: []usersclient.User{{UserID: testUserID, FirstName: "John"}}})
 
 	req := httptest.NewRequest(http.MethodGet, "/users", nil)
 	res := httptest.NewRecorder()
@@ -139,9 +111,7 @@ func TestListUsersHandlerSuccess(t *testing.T) {
 }
 
 func TestGetUserByIDHandlerNotFound(t *testing.T) {
-	repo := &testRepository{getErr: user.ErrUserNotFound}
-	service := user.NewService(repo)
-	handler := NewUserHandler(service, nil)
+	handler := NewUserHandler(&testClient{getErr: fmt.Errorf("%w: missing", usersclient.ErrNotFound)})
 
 	req := httptest.NewRequest(http.MethodGet, "/users/"+testUserID, nil)
 	routeCtx := chi.NewRouteContext()
