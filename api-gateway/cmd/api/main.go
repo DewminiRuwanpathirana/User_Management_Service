@@ -43,6 +43,18 @@ func main() {
 	}() // ensure all pending messages are sent before closing the connection.
 
 	usersNATSClient := usersclient.New(nc, 0)
+
+	// subscribe to user events to keep the API gateway's user cache up to date.
+	if err := usersNATSClient.SubscribeUserEvents(); err != nil {
+		slog.Error("failed to subscribe users client cache events", "error", err)
+		os.Exit(1)
+	}
+	defer func() {
+		if err := usersNATSClient.UnsubscribeUserEvents(); err != nil {
+			slog.Error("failed to unsubscribe users client cache events", "error", err)
+		}
+	}()
+
 	wsHub := ws.NewHub()
 	userHandler := httpapi.NewUserHandler(usersNATSClient)
 	wsHandler := ws.NewHandler(usersNATSClient, wsHub)

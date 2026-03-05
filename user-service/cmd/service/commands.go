@@ -59,7 +59,7 @@ func (h *commandHandler) handleListUsers(msg *nats.Msg) {
 	start := time.Now()
 	_, err := contract.FromJSON[contract.CommandRequest[map[string]any]](msg.Data) // parse the incoming NATS message data into a CommandRequest with an empty map as the data payload
 	if err != nil {
-		slog.Warn("rpc list users invalid request", "subject", msg.Subject, "error", err)
+		slog.Info("rpc list users invalid request", "subject", msg.Subject, "error", err)
 		reply(msg, commandError[[]userDTO]("BAD_REQUEST", "invalid request"))
 		return
 	}
@@ -85,7 +85,7 @@ func (h *commandHandler) handleCreateUser(msg *nats.Msg) {
 	start := time.Now()
 	req, err := contract.FromJSON[contract.CommandRequest[usersvc.CreateInput]](msg.Data) // parse the incoming NATS message data into a CommandRequest with CreateInput as the data payload
 	if err != nil {
-		slog.Warn("rpc create user invalid request", "subject", msg.Subject, "error", err)
+		slog.Info("rpc create user invalid request", "subject", msg.Subject, "error", err)
 		reply(msg, commandError[userDTO]("BAD_REQUEST", "invalid request"))
 		return
 	}
@@ -111,7 +111,7 @@ func (h *commandHandler) handleGetUser(msg *nats.Msg) {
 	start := time.Now()
 	req, err := contract.FromJSON[contract.CommandRequest[idRequest]](msg.Data)
 	if err != nil {
-		slog.Warn("rpc get user invalid request", "subject", msg.Subject, "error", err)
+		slog.Info("rpc get user invalid request", "subject", msg.Subject, "error", err)
 		reply(msg, commandError[userDTO]("BAD_REQUEST", "invalid request"))
 		return
 	}
@@ -132,7 +132,7 @@ func (h *commandHandler) handleUpdateUser(msg *nats.Msg) {
 	start := time.Now()
 	req, err := contract.FromJSON[contract.CommandRequest[updateUserRequest]](msg.Data)
 	if err != nil {
-		slog.Warn("rpc update user invalid request", "subject", msg.Subject, "error", err)
+		slog.Info("rpc update user invalid request", "subject", msg.Subject, "error", err)
 		reply(msg, commandError[userDTO]("BAD_REQUEST", "invalid request"))
 		return
 	}
@@ -158,7 +158,7 @@ func (h *commandHandler) handleDeleteUser(msg *nats.Msg) {
 	start := time.Now()
 	req, err := contract.FromJSON[contract.CommandRequest[idRequest]](msg.Data)
 	if err != nil {
-		slog.Warn("rpc delete user invalid request", "subject", msg.Subject, "error", err)
+		slog.Info("rpc delete user invalid request", "subject", msg.Subject, "error", err)
 		reply(msg, commandError[map[string]string]("BAD_REQUEST", "invalid request"))
 		return
 	}

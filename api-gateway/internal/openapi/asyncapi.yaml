@@ -1,0 +1,128 @@
+asyncapi: 2.6.0
+info:
+  title: Gateway WebSocket API
+  version: 1.0.0
+  description: WebSocket API for user CRUD and real-time user events.
+
+servers:
+  local:
+    url: localhost:8080
+    protocol: ws
+
+channels:
+  /ws:
+    publish:
+      operationId: clientSendRequest
+      message:
+        $ref: '#/components/messages/ClientRequest'
+    subscribe:
+      operationId: gatewaySendMessage
+      message:
+        oneOf:
+          - $ref: '#/components/messages/ServerResponse'
+          - $ref: '#/components/messages/UserEvent'
+
+components:
+  messages:
+    ClientRequest:
+      payload:
+        type: object
+        required: [requestId, action]
+        properties:
+          requestId:
+            type: string
+            description: Correlation id echoed back in direct response.
+          action:
+            type: string
+            enum: [user.create, user.list, user.get, user.update, user.delete]
+          payload:
+            type: object
+            description: Action-specific input payload.
+
+    ServerResponse:
+      payload:
+        type: object
+        required: [ok]
+        properties:
+          requestId:
+            type: string
+          ok:
+            type: boolean
+          data:
+            oneOf:
+              - $ref: '#/components/schemas/User'
+              - type: array
+                items:
+                  $ref: '#/components/schemas/User'
+              - type: object
+                additionalProperties: true
+          error:
+            $ref: '#/components/schemas/Error'
+
+    UserEvent:
+      payload:
+        type: object
+        required: [eventId, type, occurredAt, data]
+        properties:
+          eventId:
+            type: string
+          type:
+            type: string
+            enum: [user.created, user.updated, user.deleted]
+          occurredAt:
+            type: string
+            format: date-time
+          data:
+            oneOf:
+              - $ref: '#/components/schemas/User'
+              - $ref: '#/components/schemas/DeletedUserData'
+
+  schemas:
+    Error:
+      type: object
+      required: [code, message]
+      properties:
+        code:
+          type: string
+          enum: [bad_request, not_found, internal_error]
+        message:
+          type: string
+
+    DeletedUserData:
+      type: object
+      required: [userId]
+      properties:
+        userId:
+          type: string
+          format: uuid
+
+    User:
+      type: object
+      required: [userId, firstName, lastName, email, status, createdAt, updatedAt]
+      properties:
+        userId:
+          type: string
+          format: uuid
+        firstName:
+          type: string
+        lastName:
+          type: string
+        email:
+          type: string
+          format: email
+        phone:
+          type: string
+          nullable: true
+        age:
+          type: integer
+          format: int32
+          nullable: true
+        status:
+          type: string
+          enum: [Active, Inactive]
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time

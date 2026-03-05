@@ -30,6 +30,7 @@ type Client interface {
 type NATSClient struct {
 	nc      *nats.Conn
 	timeout time.Duration
+	cache   *UserCache
 }
 
 func New(nc *nats.Conn, timeout time.Duration) *NATSClient {
@@ -40,6 +41,7 @@ func New(nc *nats.Conn, timeout time.Duration) *NATSClient {
 	return &NATSClient{
 		nc:      nc,
 		timeout: timeout,
+		cache:   NewUserCache(nc),
 	}
 }
 
@@ -57,6 +59,7 @@ func (c *NATSClient) Create(ctx context.Context, input CreateUserInput) (*User, 
 		return nil, errors.New("empty create response")
 	}
 
+	c.cache.setCachedUser(*resp.Data, "rpc_create")
 	return resp.Data, nil
 }
 
@@ -74,10 +77,17 @@ func (c *NATSClient) List(ctx context.Context) ([]User, error) {
 		return []User{}, nil
 	}
 
+	c.cache.cacheUsers(*resp.Data, "rpc_list")
 	return *resp.Data, nil
 }
 
 func (c *NATSClient) Get(ctx context.Context, userID string) (*User, error) {
+	if cached, ok := c.cache.getCachedUser(userID); ok {
+		slog.Info("cache_hit", "method", "Get", "user_id", userID)
+		return cached, nil
+	}
+	slog.Info("cache_miss", "method", "Get", "user_id", userID)
+
 	req := contract.CommandRequest[IDRequest]{
 		RequestID: newRequestID(),
 		Data:      IDRequest{ID: userID},
@@ -91,6 +101,7 @@ func (c *NATSClient) Get(ctx context.Context, userID string) (*User, error) {
 		return nil, errors.New("empty get response")
 	}
 
+	c.cache.setCachedUser(*resp.Data, "rpc_get")
 	return resp.Data, nil
 }
 
@@ -111,6 +122,7 @@ func (c *NATSClient) Update(ctx context.Context, userID string, input UpdateUser
 		return nil, errors.New("empty update response")
 	}
 
+	c.cache.setCachedUser(*resp.Data, "rpc_update")
 	return resp.Data, nil
 }
 
@@ -121,7 +133,18 @@ func (c *NATSClient) Delete(ctx context.Context, userID string) error {
 	}
 
 	_, err := request[map[string]any](ctx, c, contract.SubjectUserCommandDelete, req)
+	if err == nil {
+		c.cache.deleteCachedUser(userID, "rpc_delete")
+	}
 	return err
+}
+
+func (c *NATSClient) SubscribeUserEvents() error {
+	return c.cache.SubscribeUserEvents()
+}
+
+func (c *NATSClient) UnsubscribeUserEvents() error {
+	return c.cache.UnsubscribeUserEvents()
 }
 
 // send a request and receive a response from the user service via NATS
@@ -152,7 +175,7 @@ func request[T any, R any](ctx context.Context, c *NATSClient, subject string, r
 
 	if !resp.OK {
 		mappedErr := mapCommandError(resp.Error)
-		slog.Warn("rpc response returned error", "subject", subject, "request_id", req.RequestID, "duration_ms", time.Since(start).Milliseconds(), "error", mappedErr)
+		slog.Info("rpc response returned error", "subject", subject, "request_id", req.RequestID, "duration_ms", time.Since(start).Milliseconds(), "error", mappedErr)
 		return nil, mappedErr
 	}
 	slog.Info("rpc request success", "subject", subject, "request_id", req.RequestID, "duration_ms", time.Since(start).Milliseconds())
