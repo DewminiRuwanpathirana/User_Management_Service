@@ -175,7 +175,7 @@ func request[T any, R any](ctx context.Context, c *NATSClient, subject string, r
 
 	if !resp.OK {
 		mappedErr := mapCommandError(resp.Error)
-		slog.Warn("rpc response returned error", "subject", subject, "request_id", req.RequestID, "duration_ms", time.Since(start).Milliseconds(), "error", mappedErr)
+		slog.Info("rpc response returned error", "subject", subject, "request_id", req.RequestID, "duration_ms", time.Since(start).Milliseconds(), "error", mappedErr)
 		return nil, mappedErr
 	}
 	slog.Info("rpc request success", "subject", subject, "request_id", req.RequestID, "duration_ms", time.Since(start).Milliseconds())

@@ -33,12 +33,12 @@ func (h *UserHandler) CreateUser(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
 	var input usersclient.CreateUserInput // empty struct defines the expected fields for creating a user.
 	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
-		slog.Warn("rest create user invalid body", "method", r.Method, "path", r.URL.Path, "error", err)
+		slog.Info("rest create user invalid body", "method", r.Method, "path", r.URL.Path, "error", err)
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
 	if err := h.validate.Struct(input); err != nil { // validate the input struct fields based on the validation tags defined in the struct
-		slog.Warn("rest create user validation failed", "method", r.Method, "path", r.URL.Path, "error", err)
+		slog.Info("rest create user validation failed", "method", r.Method, "path", r.URL.Path, "error", err)
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
@@ -76,7 +76,7 @@ func (h *UserHandler) GetUserByID(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
 	userID := chi.URLParam(r, "id") // extract the user ID from the URL path parameter.
 	if err := h.validate.Struct(usersclient.IDRequest{ID: userID}); err != nil {
-		slog.Warn("rest get user validation failed", "method", r.Method, "path", r.URL.Path, "user_id", userID, "error", err)
+		slog.Info("rest get user validation failed", "method", r.Method, "path", r.URL.Path, "user_id", userID, "error", err)
 		writeError(w, http.StatusBadRequest, "id must be valid uuid")
 		return
 	}
@@ -105,23 +105,23 @@ func (h *UserHandler) UpdateUser(w http.ResponseWriter, r *http.Request) {
 
 	var input usersclient.UpdateUserInput
 	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
-		slog.Warn("rest update user invalid body", "method", r.Method, "path", r.URL.Path, "user_id", userID, "error", err)
+		slog.Info("rest update user invalid body", "method", r.Method, "path", r.URL.Path, "user_id", userID, "error", err)
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
 	if input.FirstName == nil && input.LastName == nil && input.Email == nil &&
 		input.Phone == nil && input.Age == nil && input.Status == nil {
-		slog.Warn("rest update user missing fields", "method", r.Method, "path", r.URL.Path, "user_id", userID)
+		slog.Info("rest update user missing fields", "method", r.Method, "path", r.URL.Path, "user_id", userID)
 		writeError(w, http.StatusBadRequest, "at least one field is required")
 		return
 	}
 	if err := h.validate.Struct(input); err != nil {
-		slog.Warn("rest update user validation failed", "method", r.Method, "path", r.URL.Path, "user_id", userID, "error", err)
+		slog.Info("rest update user validation failed", "method", r.Method, "path", r.URL.Path, "user_id", userID, "error", err)
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
 	if err := h.validate.Struct(usersclient.IDRequest{ID: userID}); err != nil {
-		slog.Warn("rest update user id validation failed", "method", r.Method, "path", r.URL.Path, "user_id", userID, "error", err)
+		slog.Info("rest update user id validation failed", "method", r.Method, "path", r.URL.Path, "user_id", userID, "error", err)
 		writeError(w, http.StatusBadRequest, "id must be valid uuid")
 		return
 	}
@@ -148,7 +148,7 @@ func (h *UserHandler) DeleteUser(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
 	userID := chi.URLParam(r, "id") // extract the user ID from the URL path parameter.
 	if err := h.validate.Struct(usersclient.IDRequest{ID: userID}); err != nil {
-		slog.Warn("rest delete user validation failed", "method", r.Method, "path", r.URL.Path, "user_id", userID, "error", err)
+		slog.Info("rest delete user validation failed", "method", r.Method, "path", r.URL.Path, "user_id", userID, "error", err)
 		writeError(w, http.StatusBadRequest, "id must be valid uuid")
 		return
 	}

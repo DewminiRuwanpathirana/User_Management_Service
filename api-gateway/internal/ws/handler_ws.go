@@ -52,7 +52,7 @@ func (h *Handler) Handle(w http.ResponseWriter, r *http.Request) {
 
 		var req RequestMessage
 		if err := json.Unmarshal(message, &req); err != nil {
-			slog.Warn("ws invalid message", "remote_addr", conn.RemoteAddr().String(), "error", err)
+			slog.Info("ws invalid message", "remote_addr", conn.RemoteAddr().String(), "error", err)
 			if err := client.writeJSON(fail("", "bad_request", "invalid message")); err != nil {
 				slog.Error("ws write error response failed", "remote_addr", conn.RemoteAddr().String(), "error", err)
 				break
