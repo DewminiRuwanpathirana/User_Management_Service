@@ -5,25 +5,37 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"sync"
 
 	"user-service/pkg/contract"
 
 	"github.com/nats-io/nats.go"
 )
 
-func (c *NATSClient) getCachedUser(userID string) (*User, bool) {
+type UserCache struct {
+	nc        *nats.Conn
+	users     sync.Map
+	subsMu    sync.Mutex
+	eventSubs []*nats.Subscription
+}
+
+func NewUserCache(nc *nats.Conn) *UserCache {
+	return &UserCache{nc: nc}
+}
+
+func (c *UserCache) getCachedUser(userID string) (*User, bool) {
 	if userID == "" {
 		return nil, false
 	}
 
-	value, ok := c.userCache.Load(userID) // read from sync.Map by using userID as the key
+	value, ok := c.users.Load(userID)
 	if !ok {
 		return nil, false
 	}
 
-	cached, ok := value.(User) // type assert the loaded value to User type
+	cached, ok := value.(User)
 	if !ok {
-		c.userCache.Delete(userID) // delete the corrupted cache entry
+		c.users.Delete(userID)
 		slog.Warn("cache_type_mismatch_removed", "user_id", userID)
 		return nil, false
 	}
@@ -31,33 +43,33 @@ func (c *NATSClient) getCachedUser(userID string) (*User, bool) {
 	return &cached, true
 }
 
-func (c *NATSClient) deleteCachedUser(userID string, source string) {
+func (c *UserCache) deleteCachedUser(userID string, source string) {
 	if userID == "" {
 		return
 	}
 
-	c.userCache.Delete(userID)
+	c.users.Delete(userID)
 	slog.Info("cache_delete", "user_id", userID, "source", source)
 }
 
 // for single user cache update or create.
-func (c *NATSClient) setCachedUser(user User, source string) {
+func (c *UserCache) setCachedUser(user User, source string) {
 	if user.UserID == "" {
 		return
 	}
 
-	c.userCache.Store(user.UserID, user)
+	c.users.Store(user.UserID, user)
 	slog.Info("cache_store", "user_id", user.UserID, "source", source)
 }
 
 // for multiple user
-func (c *NATSClient) cacheUsers(users []User, source string) {
+func (c *UserCache) cacheUsers(users []User, source string) {
 	for _, user := range users {
 		c.setCachedUser(user, source)
 	}
 }
 
-func (c *NATSClient) SubscribeUserEvents() error {
+func (c *UserCache) SubscribeUserEvents() error {
 	c.subsMu.Lock()
 	defer c.subsMu.Unlock()
 
@@ -93,7 +105,7 @@ func (c *NATSClient) SubscribeUserEvents() error {
 	return nil
 }
 
-func (c *NATSClient) UnsubscribeUserEvents() error {
+func (c *UserCache) UnsubscribeUserEvents() error {
 	c.subsMu.Lock()
 	defer c.subsMu.Unlock()
 
@@ -112,7 +124,7 @@ func (c *NATSClient) UnsubscribeUserEvents() error {
 }
 
 // applies the user event to the local cache based on the event subject and payload.
-func (c *NATSClient) applyCacheEvent(subject string, payload []byte) error {
+func (c *UserCache) applyCacheEvent(subject string, payload []byte) error {
 	switch subject {
 	case contract.SubjectUserEventCreated, contract.SubjectUserEventUpdated:
 		event, err := contract.FromJSON[contract.Event[User]](payload)
