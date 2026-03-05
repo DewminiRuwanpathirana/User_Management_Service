@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"sync"
 	"time"
 
 	"user-service/pkg/contract"
@@ -28,8 +29,11 @@ type Client interface {
 }
 
 type NATSClient struct {
-	nc      *nats.Conn
-	timeout time.Duration
+	nc        *nats.Conn
+	timeout   time.Duration
+	userCache sync.Map             // stores user snapshots by userID -> User.
+	subsMu    sync.Mutex           // protects subscription shared state.
+	eventSubs []*nats.Subscription // holds the active NATS subscriptions for user events.
 }
 
 func New(nc *nats.Conn, timeout time.Duration) *NATSClient {
@@ -57,6 +61,7 @@ func (c *NATSClient) Create(ctx context.Context, input CreateUserInput) (*User, 
 		return nil, errors.New("empty create response")
 	}
 
+	c.setCachedUser(*resp.Data, "rpc_create")
 	return resp.Data, nil
 }
 
@@ -74,10 +79,17 @@ func (c *NATSClient) List(ctx context.Context) ([]User, error) {
 		return []User{}, nil
 	}
 
+	c.cacheUsers(*resp.Data, "rpc_list")
 	return *resp.Data, nil
 }
 
 func (c *NATSClient) Get(ctx context.Context, userID string) (*User, error) {
+	if cached, ok := c.getCachedUser(userID); ok {
+		slog.Info("cache_hit", "method", "Get", "user_id", userID)
+		return cached, nil
+	}
+	slog.Info("cache_miss", "method", "Get", "user_id", userID)
+
 	req := contract.CommandRequest[IDRequest]{
 		RequestID: newRequestID(),
 		Data:      IDRequest{ID: userID},
@@ -91,6 +103,7 @@ func (c *NATSClient) Get(ctx context.Context, userID string) (*User, error) {
 		return nil, errors.New("empty get response")
 	}
 
+	c.setCachedUser(*resp.Data, "rpc_get")
 	return resp.Data, nil
 }
 
@@ -111,6 +124,7 @@ func (c *NATSClient) Update(ctx context.Context, userID string, input UpdateUser
 		return nil, errors.New("empty update response")
 	}
 
+	c.setCachedUser(*resp.Data, "rpc_update")
 	return resp.Data, nil
 }
 
@@ -121,6 +135,9 @@ func (c *NATSClient) Delete(ctx context.Context, userID string) error {
 	}
 
 	_, err := request[map[string]any](ctx, c, contract.SubjectUserCommandDelete, req)
+	if err == nil {
+		c.deleteCachedUser(userID, "rpc_delete")
+	}
 	return err
 }
 
