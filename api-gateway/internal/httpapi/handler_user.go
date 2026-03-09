@@ -15,16 +15,18 @@ import (
 )
 
 type UserHandler struct {
-	client   usersclient.Client  // interface that defines the methods for interacting with the user service.
-	validate *validator.Validate // validator instance for validating request payloads.
+	read     usersclient.UserReadProvider
+	write    usersclient.UserWriteProvider
+	validate *validator.Validate
 }
 
-func NewUserHandler(client usersclient.Client) *UserHandler {
+func NewUserHandler(read usersclient.UserReadProvider, write usersclient.UserWriteProvider) *UserHandler {
 	v := validator.New()
 	_ = validation.RegisterPhone(v)
 
 	return &UserHandler{
-		client:   client,
+		read:     read,
+		write:    write,
 		validate: v,
 	}
 }
@@ -43,7 +45,7 @@ func (h *UserHandler) CreateUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	createdUser, err := h.client.Create(r.Context(), input)
+	createdUser, err := h.write.Create(r.Context(), input)
 	if err != nil {
 		slog.Error("rest create user failed", "method", r.Method, "path", r.URL.Path, "error", err)
 		switch {
@@ -61,7 +63,7 @@ func (h *UserHandler) CreateUser(w http.ResponseWriter, r *http.Request) {
 
 func (h *UserHandler) ListUsers(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
-	users, err := h.client.List(r.Context())
+	users, err := h.read.GetAllUsers(r.Context())
 	if err != nil {
 		slog.Error("rest list users failed", "method", r.Method, "path", r.URL.Path, "error", err)
 		writeError(w, http.StatusInternalServerError, "internal server error")
@@ -81,7 +83,7 @@ func (h *UserHandler) GetUserByID(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	foundUser, err := h.client.Get(r.Context(), userID)
+	foundUser, err := h.read.GetUserByID(r.Context(), userID)
 	if err != nil {
 		slog.Error("rest get user failed", "method", r.Method, "path", r.URL.Path, "user_id", userID, "error", err)
 		switch {
@@ -126,7 +128,7 @@ func (h *UserHandler) UpdateUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	updatedUser, err := h.client.Update(r.Context(), userID, input)
+	updatedUser, err := h.write.Update(r.Context(), userID, input)
 	if err != nil {
 		slog.Error("rest update user failed", "method", r.Method, "path", r.URL.Path, "user_id", userID, "error", err)
 		switch {
@@ -153,7 +155,7 @@ func (h *UserHandler) DeleteUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	err := h.client.Delete(r.Context(), userID)
+	err := h.write.Delete(r.Context(), userID)
 	if err != nil {
 		slog.Error("rest delete user failed", "method", r.Method, "path", r.URL.Path, "user_id", userID, "error", err)
 		switch {

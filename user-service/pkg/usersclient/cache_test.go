@@ -4,24 +4,40 @@ import (
 	"testing"
 
 	"user-service/pkg/contract"
+
+	"github.com/stretchr/testify/assert"
 )
 
-func TestCacheSetAndGet(t *testing.T) {
+func TestSetAndGetCachedUser(t *testing.T) {
 	cache := NewUserCache(nil)
 	cache.setCachedUser(User{UserID: "u-1", FirstName: "John"}, "test")
 
-	got, ok := cache.getCachedUser("u-1")
-	if !ok || got == nil || got.UserID != "u-1" {
-		t.Fatalf("expected cached user u-1, got %#v", got)
-	}
+	user, ok := cache.getCachedUser("u-1")
+
+	assert.True(t, ok)
+	assert.NotNil(t, user)
+	assert.Equal(t, "u-1", user.UserID)
+	assert.Equal(t, "John", user.FirstName)
 }
 
-func TestCacheMiss(t *testing.T) {
+func TestGetCachedUserMiss(t *testing.T) {
 	cache := NewUserCache(nil)
-	_, ok := cache.getCachedUser("missing")
-	if ok {
-		t.Fatalf("expected cache miss")
-	}
+
+	user, ok := cache.getCachedUser("missing")
+
+	assert.False(t, ok)
+	assert.Nil(t, user)
+}
+
+func TestGetCachedUsers(t *testing.T) {
+	cache := NewUserCache(nil)
+	cache.setCachedUser(User{UserID: "u-1", FirstName: "John"}, "test")
+	cache.setCachedUser(User{UserID: "u-2", FirstName: "Alex"}, "test")
+
+	users, ok := cache.getCachedUsers()
+
+	assert.True(t, ok)
+	assert.Len(t, users, 2)
 }
 
 func TestDeleteEventRemovesFromCache(t *testing.T) {
@@ -35,16 +51,12 @@ func TestDeleteEventRemovesFromCache(t *testing.T) {
 	}
 
 	payload, err := contract.ToJSON(deleteEvent)
-	if err != nil {
-		t.Fatalf("marshal delete event: %v", err)
-	}
+	assert.NoError(t, err)
 
-	if err := cache.applyCacheEvent(contract.SubjectUserEventDeleted, payload); err != nil {
-		t.Fatalf("apply delete event: %v", err)
-	}
+	err = cache.applyCacheEvent(contract.SubjectUserEventDeleted, payload)
+	assert.NoError(t, err)
 
-	_, ok := cache.getCachedUser("u-2")
-	if ok {
-		t.Fatalf("expected cache to be cleared for u-2")
-	}
+	user, ok := cache.getCachedUser("u-2")
+	assert.False(t, ok)
+	assert.Nil(t, user)
 }

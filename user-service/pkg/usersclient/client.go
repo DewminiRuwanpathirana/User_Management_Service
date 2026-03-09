@@ -18,19 +18,29 @@ var ErrBadRequest = errors.New("users client bad request")
 var ErrNotFound = errors.New("users client not found")
 var ErrService = errors.New("users client service error")
 
-// Client defines the interface for interacting with the user service.
-type Client interface {
+// UserReadProvider exposes user query operations
+type UserReadProvider interface {
+	GetAllUsers(ctx context.Context) ([]User, error)
+	GetUserByID(ctx context.Context, userID string) (*User, error)
+}
+
+// UserWriteProvider exposes user mutation operations
+type UserWriteProvider interface {
 	Create(ctx context.Context, input CreateUserInput) (*User, error)
-	List(ctx context.Context) ([]User, error)
-	Get(ctx context.Context, userID string) (*User, error)
 	Update(ctx context.Context, userID string, input UpdateUserInput) (*User, error)
 	Delete(ctx context.Context, userID string) error
 }
 
+type UserProviders struct {
+	Read  UserReadProvider
+	Write UserWriteProvider
+}
+
 type NATSClient struct {
-	nc      *nats.Conn
-	timeout time.Duration
-	cache   *UserCache
+	cache         *UserCache
+	readProvider  UserReadProvider
+	writeProvider UserWriteProvider
+	natsProvider  *NATSUserProvider
 }
 
 func New(nc *nats.Conn, timeout time.Duration) *NATSClient {
@@ -38,105 +48,34 @@ func New(nc *nats.Conn, timeout time.Duration) *NATSClient {
 		timeout = defaultTimeout
 	}
 
+	cache := NewUserCache(nc)
+	remote := &NATSUserProvider{nc: nc, timeout: timeout}
+
 	return &NATSClient{
-		nc:      nc,
-		timeout: timeout,
-		cache:   NewUserCache(nc),
+		cache:         cache,
+		readProvider:  NewCacheFirstReadProvider(cache, remote),
+		writeProvider: remote,
+		natsProvider:  remote,
 	}
 }
 
-func (c *NATSClient) Create(ctx context.Context, input CreateUserInput) (*User, error) {
-	req := contract.CommandRequest[CreateUserInput]{
-		RequestID: newRequestID(),
-		Data:      input,
+// expose the read and write interfaces from NATSClient to main.go without making internal fields public
+func (c *NATSClient) Providers() UserProviders {
+	return UserProviders{
+		Read:  c.readProvider,
+		Write: c.writeProvider,
 	}
+}
 
-	resp, err := request[User](ctx, c, contract.SubjectUserCommandCreate, req)
+// PrimeCache fills the in-memory cache with an initial users snapshot
+func (c *NATSClient) PrimeCache(ctx context.Context) error {
+	users, err := c.natsProvider.GetAllUsers(ctx)
 	if err != nil {
-		return nil, err
-	}
-	if resp.Data == nil {
-		return nil, errors.New("empty create response")
+		return err
 	}
 
-	c.cache.setCachedUser(*resp.Data, "rpc_create")
-	return resp.Data, nil
-}
-
-func (c *NATSClient) List(ctx context.Context) ([]User, error) {
-	req := contract.CommandRequest[map[string]any]{
-		RequestID: newRequestID(),
-		Data:      map[string]any{},
-	}
-
-	resp, err := request[[]User](ctx, c, contract.SubjectUserCommandList, req)
-	if err != nil {
-		return nil, err
-	}
-	if resp.Data == nil {
-		return []User{}, nil
-	}
-
-	c.cache.cacheUsers(*resp.Data, "rpc_list")
-	return *resp.Data, nil
-}
-
-func (c *NATSClient) Get(ctx context.Context, userID string) (*User, error) {
-	if cached, ok := c.cache.getCachedUser(userID); ok {
-		slog.Info("cache_hit", "method", "Get", "user_id", userID)
-		return cached, nil
-	}
-	slog.Info("cache_miss", "method", "Get", "user_id", userID)
-
-	req := contract.CommandRequest[IDRequest]{
-		RequestID: newRequestID(),
-		Data:      IDRequest{ID: userID},
-	}
-
-	resp, err := request[User](ctx, c, contract.SubjectUserCommandGet, req)
-	if err != nil {
-		return nil, err
-	}
-	if resp.Data == nil {
-		return nil, errors.New("empty get response")
-	}
-
-	c.cache.setCachedUser(*resp.Data, "rpc_get")
-	return resp.Data, nil
-}
-
-func (c *NATSClient) Update(ctx context.Context, userID string, input UpdateUserInput) (*User, error) {
-	req := contract.CommandRequest[UpdateUserRequest]{
-		RequestID: newRequestID(),
-		Data: UpdateUserRequest{
-			ID:              userID,
-			UpdateUserInput: input,
-		},
-	}
-
-	resp, err := request[User](ctx, c, contract.SubjectUserCommandUpdate, req)
-	if err != nil {
-		return nil, err
-	}
-	if resp.Data == nil {
-		return nil, errors.New("empty update response")
-	}
-
-	c.cache.setCachedUser(*resp.Data, "rpc_update")
-	return resp.Data, nil
-}
-
-func (c *NATSClient) Delete(ctx context.Context, userID string) error {
-	req := contract.CommandRequest[IDRequest]{
-		RequestID: newRequestID(),
-		Data:      IDRequest{ID: userID},
-	}
-
-	_, err := request[map[string]any](ctx, c, contract.SubjectUserCommandDelete, req)
-	if err == nil {
-		c.cache.deleteCachedUser(userID, "rpc_delete")
-	}
-	return err
+	c.cache.replaceAllUsers(users, "startup_prime")
+	return nil
 }
 
 func (c *NATSClient) SubscribeUserEvents() error {
@@ -147,8 +86,135 @@ func (c *NATSClient) UnsubscribeUserEvents() error {
 	return c.cache.UnsubscribeUserEvents()
 }
 
+type CacheFirstReadProvider struct {
+	cache            *UserCache
+	natsReadProvider UserReadProvider
+}
+
+func NewCacheFirstReadProvider(cache *UserCache, natsReadProvider UserReadProvider) *CacheFirstReadProvider {
+	return &CacheFirstReadProvider{
+		cache:            cache,
+		natsReadProvider: natsReadProvider,
+	}
+}
+
+func (p *CacheFirstReadProvider) GetAllUsers(ctx context.Context) ([]User, error) {
+	if cached, ok := p.cache.getCachedUsers(); ok {
+		slog.Info("cache_hit", "method", "GetAllUsers", "count", len(cached))
+		return cached, nil
+	}
+
+	users, err := p.natsReadProvider.GetAllUsers(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	return users, nil
+}
+
+func (p *CacheFirstReadProvider) GetUserByID(ctx context.Context, userID string) (*User, error) {
+	if cached, ok := p.cache.getCachedUser(userID); ok {
+		slog.Info("cache_hit", "method", "GetUserByID", "user_id", userID)
+		return cached, nil
+	}
+
+	user, err := p.natsReadProvider.GetUserByID(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+
+	return user, nil
+}
+
+// NATSUserProvider implements read and write providers through NATS.
+type NATSUserProvider struct {
+	nc      *nats.Conn
+	timeout time.Duration
+}
+
+func (p *NATSUserProvider) Create(ctx context.Context, input CreateUserInput) (*User, error) {
+	req := contract.CommandRequest[CreateUserInput]{
+		RequestID: newRequestID(),
+		Data:      input,
+	}
+
+	resp, err := request[User](ctx, p, contract.SubjectUserCommandCreate, req)
+	if err != nil {
+		return nil, err
+	}
+	if resp.Data == nil {
+		return nil, errors.New("empty create response")
+	}
+
+	return resp.Data, nil
+}
+
+func (p *NATSUserProvider) GetAllUsers(ctx context.Context) ([]User, error) {
+	req := contract.CommandRequest[map[string]any]{
+		RequestID: newRequestID(),
+		Data:      map[string]any{},
+	}
+
+	resp, err := request[[]User](ctx, p, contract.SubjectUserCommandList, req)
+	if err != nil {
+		return nil, err
+	}
+	if resp.Data == nil {
+		return []User{}, nil
+	}
+
+	return *resp.Data, nil
+}
+
+func (p *NATSUserProvider) GetUserByID(ctx context.Context, userID string) (*User, error) {
+	req := contract.CommandRequest[IDRequest]{
+		RequestID: newRequestID(),
+		Data:      IDRequest{ID: userID},
+	}
+
+	resp, err := request[User](ctx, p, contract.SubjectUserCommandGet, req)
+	if err != nil {
+		return nil, err
+	}
+	if resp.Data == nil {
+		return nil, errors.New("empty get response")
+	}
+
+	return resp.Data, nil
+}
+
+func (p *NATSUserProvider) Update(ctx context.Context, userID string, input UpdateUserInput) (*User, error) {
+	req := contract.CommandRequest[UpdateUserRequest]{
+		RequestID: newRequestID(),
+		Data: UpdateUserRequest{
+			ID:              userID,
+			UpdateUserInput: input,
+		},
+	}
+
+	resp, err := request[User](ctx, p, contract.SubjectUserCommandUpdate, req)
+	if err != nil {
+		return nil, err
+	}
+	if resp.Data == nil {
+		return nil, errors.New("empty update response")
+	}
+
+	return resp.Data, nil
+}
+
+func (p *NATSUserProvider) Delete(ctx context.Context, userID string) error {
+	req := contract.CommandRequest[IDRequest]{
+		RequestID: newRequestID(),
+		Data:      IDRequest{ID: userID},
+	}
+
+	_, err := request[map[string]any](ctx, p, contract.SubjectUserCommandDelete, req)
+	return err
+}
+
 // send a request and receive a response from the user service via NATS
-func request[T any, R any](ctx context.Context, c *NATSClient, subject string, req contract.CommandRequest[R]) (*contract.CommandResponse[T], error) {
+func request[T any, R any](ctx context.Context, p *NATSUserProvider, subject string, req contract.CommandRequest[R]) (*contract.CommandResponse[T], error) {
 	start := time.Now()
 	data, err := contract.ToJSON(req)
 	if err != nil {
@@ -156,12 +222,11 @@ func request[T any, R any](ctx context.Context, c *NATSClient, subject string, r
 		return nil, err
 	}
 
-	timeoutCtx, cancel := context.WithTimeout(ctx, c.timeout)
-	defer cancel() // cancel the context to release resources if the request completes before the timeout
+	timeoutCtx, cancel := context.WithTimeout(ctx, p.timeout)
+	defer cancel()
 
-	// send the request and wait for a response from the user service via NATS
-	slog.Info("rpc request start", "subject", subject, "request_id", req.RequestID, "timeout_ms", c.timeout.Milliseconds())
-	msg, err := c.nc.RequestWithContext(timeoutCtx, subject, data)
+	// use the NATS connection to send a request and wait for a response
+	msg, err := p.nc.RequestWithContext(timeoutCtx, subject, data)
 	if err != nil {
 		slog.Error("rpc request failed", "subject", subject, "request_id", req.RequestID, "duration_ms", time.Since(start).Milliseconds(), "error", err)
 		return nil, err
@@ -178,7 +243,6 @@ func request[T any, R any](ctx context.Context, c *NATSClient, subject string, r
 		slog.Info("rpc response returned error", "subject", subject, "request_id", req.RequestID, "duration_ms", time.Since(start).Milliseconds(), "error", mappedErr)
 		return nil, mappedErr
 	}
-	slog.Info("rpc request success", "subject", subject, "request_id", req.RequestID, "duration_ms", time.Since(start).Milliseconds())
 
 	return &resp, nil
 }

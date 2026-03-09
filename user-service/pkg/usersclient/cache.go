@@ -13,14 +13,29 @@ import (
 )
 
 type UserCache struct {
-	nc        *nats.Conn
-	users     sync.Map
+	nc        *nats.Conn // nats connection used for subscribing to user events
+	usersMu   sync.RWMutex
+	users     map[string]User // in-memory cache of users
+	eventCh   chan cacheEvent // channel for receiving user events from NATS subscriptions to update the cache
 	subsMu    sync.Mutex
-	eventSubs []*nats.Subscription
+	eventSubs []*nats.Subscription // NATS subscriptions for user events, stored to allow unsubscription on shutdown
+}
+
+type cacheEvent struct {
+	subject string
+	payload []byte
 }
 
 func NewUserCache(nc *nats.Conn) *UserCache {
-	return &UserCache{nc: nc}
+	cache := &UserCache{
+		nc:      nc,
+		users:   make(map[string]User),
+		eventCh: make(chan cacheEvent, 256),
+	}
+
+	go cache.runCacheUpdater() // start the cache updater goroutine to listen for user events and update the cache accordingly.
+
+	return cache
 }
 
 func (c *UserCache) getCachedUser(userID string) (*User, bool) {
@@ -28,19 +43,29 @@ func (c *UserCache) getCachedUser(userID string) (*User, bool) {
 		return nil, false
 	}
 
-	value, ok := c.users.Load(userID)
+	c.usersMu.RLock()
+	user, ok := c.users[userID]
+	c.usersMu.RUnlock()
 	if !ok {
 		return nil, false
 	}
 
-	cached, ok := value.(User)
-	if !ok {
-		c.users.Delete(userID)
-		slog.Warn("cache_type_mismatch_removed", "user_id", userID)
+	return &user, true
+}
+
+func (c *UserCache) getCachedUsers() ([]User, bool) {
+	c.usersMu.RLock()
+	defer c.usersMu.RUnlock()
+
+	if len(c.users) == 0 {
 		return nil, false
 	}
 
-	return &cached, true
+	out := make([]User, 0, len(c.users))
+	for _, user := range c.users {
+		out = append(out, user)
+	}
+	return out, true
 }
 
 func (c *UserCache) deleteCachedUser(userID string, source string) {
@@ -48,24 +73,46 @@ func (c *UserCache) deleteCachedUser(userID string, source string) {
 		return
 	}
 
-	c.users.Delete(userID)
+	c.usersMu.Lock()
+	delete(c.users, userID)
+	c.usersMu.Unlock()
+
 	slog.Info("cache_delete", "user_id", userID, "source", source)
 }
 
-// for single user cache update or create.
 func (c *UserCache) setCachedUser(user User, source string) {
 	if user.UserID == "" {
 		return
 	}
 
-	c.users.Store(user.UserID, user)
+	c.usersMu.Lock()
+	c.users[user.UserID] = user
+	c.usersMu.Unlock()
+
 	slog.Info("cache_store", "user_id", user.UserID, "source", source)
 }
 
-// for multiple user
-func (c *UserCache) cacheUsers(users []User, source string) {
+func (c *UserCache) replaceAllUsers(users []User, source string) {
+	next := make(map[string]User, len(users))
 	for _, user := range users {
-		c.setCachedUser(user, source)
+		if user.UserID == "" {
+			continue
+		}
+		next[user.UserID] = user
+	}
+
+	c.usersMu.Lock()
+	c.users = next
+	c.usersMu.Unlock()
+
+	slog.Info("cache_replace_all", "count", len(next), "source", source)
+}
+
+func (c *UserCache) runCacheUpdater() {
+	for event := range c.eventCh { // continuously listen for user events from the eventCh channel and apply them to the cache using applyCacheEvent.
+		if err := c.applyCacheEvent(event.subject, event.payload); err != nil {
+			slog.Warn("cache_event_apply_failed", "subject", event.subject, "error", err)
+		}
 	}
 }
 
@@ -83,12 +130,14 @@ func (c *UserCache) SubscribeUserEvents() error {
 		contract.SubjectUserEventDeleted,
 	}
 
-	subs := make([]*nats.Subscription, 0, len(subjects)) // create a slice to hold the created subscriptions
+	subs := make([]*nats.Subscription, 0, len(subjects))
 	for _, subject := range subjects {
 		currentSubject := subject
-		sub, err := c.nc.Subscribe(currentSubject, func(msg *nats.Msg) {
-			if err := c.applyCacheEvent(currentSubject, msg.Data); err != nil {
-				slog.Error("cache_event_apply_failed", "subject", currentSubject, "error", err)
+		sub, err := c.nc.Subscribe(currentSubject, func(msg *nats.Msg) { // for each user event received from NATS, send a cacheEvent containing the subject and payload to the eventCh channel to be processed by the cache updater goroutine.
+			select {
+			case c.eventCh <- cacheEvent{subject: currentSubject, payload: msg.Data}:
+			default:
+				slog.Warn("cache_event_dropped_channel_full", "subject", currentSubject)
 			}
 		})
 		if err != nil {
@@ -115,9 +164,7 @@ func (c *UserCache) UnsubscribeUserEvents() error {
 			unsubscribeErr = err
 		}
 	}
-	if len(c.eventSubs) > 0 {
-		slog.Info("cache_event_subscriptions_removed", "count", len(c.eventSubs))
-	}
+	slog.Info("unsubscribed user events")
 
 	c.eventSubs = nil
 	return unsubscribeErr
@@ -163,7 +210,7 @@ func parseDeletedEvent(payload []byte) (string, string, string, error) {
 		return "", "", "", err
 	}
 
-	userID, _ := raw.Data["userId"].(string) // read userId from map with type assertion to string.
+	userID, _ := raw.Data["userId"].(string)
 	if userID == "" {
 		return "", "", "", errors.New("deleted event missing userId")
 	}

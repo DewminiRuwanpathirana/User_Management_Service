@@ -15,18 +15,20 @@ import (
 )
 
 type Handler struct {
-	client   usersclient.Client
+	read     usersclient.UserReadProvider
+	write    usersclient.UserWriteProvider
 	hub      *Hub
 	upgrader websocket.Upgrader
 	validate *validator.Validate
 }
 
-func NewHandler(client usersclient.Client, hub *Hub) *Handler {
+func NewHandler(read usersclient.UserReadProvider, write usersclient.UserWriteProvider, hub *Hub) *Handler {
 	v := validator.New()
 	_ = validation.RegisterPhone(v)
 
 	return &Handler{
-		client:   client,
+		read:     read,
+		write:    write,
 		hub:      hub,
 		upgrader: websocket.Upgrader{},
 		validate: v,
@@ -54,7 +56,7 @@ func (h *Handler) Handle(w http.ResponseWriter, r *http.Request) {
 		if err := json.Unmarshal(message, &req); err != nil {
 			slog.Info("ws invalid message", "remote_addr", conn.RemoteAddr().String(), "error", err)
 			if err := client.writeJSON(fail("", "bad_request", "invalid message")); err != nil {
-				slog.Error("ws write error response failed", "remote_addr", conn.RemoteAddr().String(), "error", err)
+				slog.Warn("ws write error response failed", "remote_addr", conn.RemoteAddr().String(), "error", err)
 				break
 			}
 			continue
@@ -64,7 +66,7 @@ func (h *Handler) Handle(w http.ResponseWriter, r *http.Request) {
 		resp := h.process(r.Context(), req)
 		if shouldWriteDirectResponse(req.Action, resp) {
 			if err := client.writeJSON(resp); err != nil {
-				slog.Error("ws write direct response failed", "remote_addr", conn.RemoteAddr().String(), "action", req.Action, "request_id", req.RequestID, "error", err)
+				slog.Warn("ws write direct response failed", "remote_addr", conn.RemoteAddr().String(), "action", req.Action, "request_id", req.RequestID, "error", err)
 				break
 			}
 		}
@@ -97,8 +99,9 @@ func (h *Handler) create(ctx context.Context, req RequestMessage) ResponseMessag
 		return fail(req.RequestID, "bad_request", "invalid payload")
 	}
 
-	data, err := h.client.Create(ctx, input)
+	data, err := h.write.Create(ctx, input)
 	if err != nil {
+		slog.Error("ws create user failed", "action", req.Action, "request_id", req.RequestID, "error", err)
 		return failFromError(req.RequestID, err)
 	}
 
@@ -106,8 +109,9 @@ func (h *Handler) create(ctx context.Context, req RequestMessage) ResponseMessag
 }
 
 func (h *Handler) list(ctx context.Context, req RequestMessage) ResponseMessage {
-	data, err := h.client.List(ctx)
+	data, err := h.read.GetAllUsers(ctx)
 	if err != nil {
+		slog.Warn("ws list users failed", "action", req.Action, "request_id", req.RequestID, "error", err)
 		return failFromError(req.RequestID, err)
 	}
 
@@ -123,8 +127,9 @@ func (h *Handler) get(ctx context.Context, req RequestMessage) ResponseMessage {
 		return fail(req.RequestID, "bad_request", "id must be valid uuid")
 	}
 
-	data, err := h.client.Get(ctx, payload.ID)
+	data, err := h.read.GetUserByID(ctx, payload.ID)
 	if err != nil {
+		slog.Warn("ws get user failed", "action", req.Action, "request_id", req.RequestID, "user_id", payload.ID, "error", err)
 		return failFromError(req.RequestID, err)
 	}
 
@@ -156,8 +161,9 @@ func (h *Handler) update(ctx context.Context, req RequestMessage) ResponseMessag
 		return fail(req.RequestID, "bad_request", "id must be valid uuid")
 	}
 
-	data, err := h.client.Update(ctx, payload.ID, input)
+	data, err := h.write.Update(ctx, payload.ID, input)
 	if err != nil {
+		slog.Warn("ws update user failed", "action", req.Action, "request_id", req.RequestID, "user_id", payload.ID, "error", err)
 		return failFromError(req.RequestID, err)
 	}
 
@@ -173,8 +179,9 @@ func (h *Handler) delete(ctx context.Context, req RequestMessage) ResponseMessag
 		return fail(req.RequestID, "bad_request", "id must be valid uuid")
 	}
 
-	err := h.client.Delete(ctx, payload.ID)
+	err := h.write.Delete(ctx, payload.ID)
 	if err != nil {
+		slog.Warn("ws delete user failed", "action", req.Action, "request_id", req.RequestID, "user_id", payload.ID, "error", err)
 		return failFromError(req.RequestID, err)
 	}
 

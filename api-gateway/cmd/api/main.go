@@ -1,11 +1,13 @@
 package main
 
 import (
+	"context"
 	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"time"
 
 	"gotrainingproject/internal/httpapi"
@@ -43,25 +45,35 @@ func main() {
 	}() // ensure all pending messages are sent before closing the connection.
 
 	usersNATSClient := usersclient.New(nc, 0)
+	userProviders := usersNATSClient.Providers()
+
+	primeCtx, cancelPrime := context.WithTimeout(context.Background(), 15*time.Second)
+	if err := usersNATSClient.PrimeCache(primeCtx); err != nil {
+		cancelPrime()
+		slog.Warn("failed to prime users cache", "error", err)
+		os.Exit(1)
+	}
+	cancelPrime()
+	slog.Info("users cache primed on startup")
 
 	// subscribe to user events to keep the API gateway's user cache up to date.
 	if err := usersNATSClient.SubscribeUserEvents(); err != nil {
-		slog.Error("failed to subscribe users client cache events", "error", err)
+		slog.Warn("failed to subscribe users client cache events", "error", err)
 		os.Exit(1)
 	}
 	defer func() {
 		if err := usersNATSClient.UnsubscribeUserEvents(); err != nil {
-			slog.Error("failed to unsubscribe users client cache events", "error", err)
+			slog.Warn("failed to unsubscribe users client cache events", "error", err)
 		}
 	}()
 
 	wsHub := ws.NewHub()
-	userHandler := httpapi.NewUserHandler(usersNATSClient)
-	wsHandler := ws.NewHandler(usersNATSClient, wsHub)
+	userHandler := httpapi.NewUserHandler(userProviders.Read, userProviders.Write)
+	wsHandler := ws.NewHandler(userProviders.Read, userProviders.Write, wsHub)
 
 	// subscribe to user events and broadcast them to connected WebSocket clients.
 	if err := ws.SubscribeUserEvents(nc, wsHub); err != nil {
-		slog.Error("failed to subscribe user events", "error", err)
+		slog.Warn("failed to subscribe user events", "error", err)
 		os.Exit(1)
 	}
 
@@ -73,7 +85,7 @@ func main() {
 		w.WriteHeader(http.StatusOK)
 		_, err := w.Write([]byte(`{"status":"ok"}`))
 		if err != nil {
-			slog.Error("failed to write health response", "error", err)
+			slog.Info("failed to write health response", "error", err)
 		}
 	})
 	// serve OpenAPI spec and Swagger UI
@@ -123,6 +135,11 @@ func (r *statusRecorder) WriteHeader(code int) {
 // requestLogMiddleware is an HTTP middleware that logs incoming requests and their response status and duration using slog.
 func requestLogMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if isWebSocketUpgrade(r) {
+			next.ServeHTTP(w, r)
+			return
+		}
+
 		start := time.Now()
 		rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
 
@@ -135,4 +152,9 @@ func requestLogMiddleware(next http.Handler) http.Handler {
 			"duration_ms", time.Since(start).Milliseconds(),
 		)
 	})
+}
+
+func isWebSocketUpgrade(r *http.Request) bool {
+	return strings.Contains(strings.ToLower(r.Header.Get("Connection")), "upgrade") &&
+		strings.EqualFold(r.Header.Get("Upgrade"), "websocket")
 }

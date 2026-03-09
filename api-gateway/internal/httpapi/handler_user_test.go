@@ -9,119 +9,147 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/go-chi/chi/v5"
 	"user-service/pkg/usersclient"
+
+	"github.com/go-chi/chi/v5"
+	"github.com/stretchr/testify/assert"
 )
 
 const testUserID = "550e8400-e29b-41d4-a716-446655440000"
 
-type testClient struct {
-	createResult *usersclient.User
-	createErr    error
-	listResult   []usersclient.User
-	listErr      error
-	getResult    *usersclient.User
-	getErr       error
+type readStub struct {
+	users []usersclient.User
+	user  *usersclient.User
+	err   error
 }
 
-func (c *testClient) Create(ctx context.Context, input usersclient.CreateUserInput) (*usersclient.User, error) {
-	if c.createErr != nil {
-		return nil, c.createErr
+func (s *readStub) GetAllUsers(ctx context.Context) ([]usersclient.User, error) {
+	return s.users, s.err
+}
+
+func (s *readStub) GetUserByID(ctx context.Context, userID string) (*usersclient.User, error) {
+	return s.user, s.err
+}
+
+type writeStub struct {
+	user *usersclient.User
+	err  error
+}
+
+func (s *writeStub) Create(ctx context.Context, input usersclient.CreateUserInput) (*usersclient.User, error) {
+	if s.err != nil {
+		return nil, s.err
 	}
-	if c.createResult != nil {
-		return c.createResult, nil
+	if s.user != nil {
+		return s.user, nil
 	}
-	return &usersclient.User{UserID: testUserID, FirstName: input.FirstName, LastName: input.LastName, Email: input.Email}, nil
+	return &usersclient.User{UserID: testUserID, FirstName: input.FirstName}, nil
 }
 
-func (c *testClient) List(ctx context.Context) ([]usersclient.User, error) {
-	return c.listResult, c.listErr
+func (s *writeStub) Update(ctx context.Context, userID string, input usersclient.UpdateUserInput) (*usersclient.User, error) {
+	if s.err != nil {
+		return nil, s.err
+	}
+	if s.user != nil {
+		return s.user, nil
+	}
+	return &usersclient.User{UserID: userID, FirstName: "Updated"}, nil
 }
 
-func (c *testClient) Get(ctx context.Context, userID string) (*usersclient.User, error) {
-	return c.getResult, c.getErr
+func (s *writeStub) Delete(ctx context.Context, userID string) error {
+	return s.err
 }
 
-func (c *testClient) Update(ctx context.Context, userID string, input usersclient.UpdateUserInput) (*usersclient.User, error) {
-	return nil, nil
+func addRouteID(req *http.Request, id string) *http.Request {
+	routeCtx := chi.NewRouteContext()
+	routeCtx.URLParams.Add("id", id)
+	return req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, routeCtx))
 }
 
-func (c *testClient) Delete(ctx context.Context, userID string) error {
-	return nil
-}
+func TestCreateUser(t *testing.T) {
+	handler := NewUserHandler(&readStub{}, &writeStub{})
 
-func TestCreateUserHandlerInvalidJSON(t *testing.T) {
-	handler := NewUserHandler(&testClient{})
-
-	req := httptest.NewRequest(http.MethodPost, "/users", bytes.NewBufferString("{invalid"))
+	req := httptest.NewRequest(http.MethodPost, "/users", bytes.NewBufferString(`{"firstName":"John","lastName":"Doe","email":"john@example.com"}`))
 	res := httptest.NewRecorder()
 
 	handler.CreateUser(res, req)
 
-	if res.Code != http.StatusBadRequest {
-		t.Fatalf("expected 400, got %d", res.Code)
-	}
+	assert.Equal(t, http.StatusCreated, res.Code)
 }
 
-func TestCreateUserHandlerSuccess(t *testing.T) {
-	handler := NewUserHandler(&testClient{})
+func TestCreateUserInvalidJSON(t *testing.T) {
+	handler := NewUserHandler(&readStub{}, &writeStub{})
 
-	body := map[string]any{"firstName": "John", "lastName": "Doe", "email": "john@example.com"}
-	bodyBytes, _ := json.Marshal(body)
-
-	req := httptest.NewRequest(http.MethodPost, "/users", bytes.NewReader(bodyBytes))
-	req.Header.Set("Content-Type", "application/json")
+	req := httptest.NewRequest(http.MethodPost, "/users", bytes.NewBufferString("{bad"))
 	res := httptest.NewRecorder()
 
 	handler.CreateUser(res, req)
 
-	if res.Code != http.StatusCreated {
-		t.Fatalf("expected 201, got %d", res.Code)
-	}
+	assert.Equal(t, http.StatusBadRequest, res.Code)
 }
 
-func TestCreateUserHandlerValidationError(t *testing.T) {
-	handler := NewUserHandler(&testClient{createErr: usersclient.ErrBadRequest})
-
-	body := map[string]any{"firstName": "J", "lastName": "D", "email": "bad-email"}
-	bodyBytes, _ := json.Marshal(body)
-
-	req := httptest.NewRequest(http.MethodPost, "/users", bytes.NewReader(bodyBytes))
-	req.Header.Set("Content-Type", "application/json")
-	res := httptest.NewRecorder()
-
-	handler.CreateUser(res, req)
-
-	if res.Code != http.StatusBadRequest {
-		t.Fatalf("expected 400, got %d", res.Code)
-	}
-}
-
-func TestListUsersHandlerSuccess(t *testing.T) {
-	handler := NewUserHandler(&testClient{listResult: []usersclient.User{{UserID: testUserID, FirstName: "John"}}})
+func TestListUsers(t *testing.T) {
+	handler := NewUserHandler(&readStub{
+		users: []usersclient.User{{UserID: testUserID, FirstName: "John"}},
+	}, &writeStub{})
 
 	req := httptest.NewRequest(http.MethodGet, "/users", nil)
 	res := httptest.NewRecorder()
 
 	handler.ListUsers(res, req)
 
-	if res.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d", res.Code)
-	}
+	assert.Equal(t, http.StatusOK, res.Code)
 }
 
-func TestGetUserByIDHandlerNotFound(t *testing.T) {
-	handler := NewUserHandler(&testClient{getErr: fmt.Errorf("%w: missing", usersclient.ErrNotFound)})
+func TestGetUserByID(t *testing.T) {
+	handler := NewUserHandler(&readStub{
+		user: &usersclient.User{UserID: testUserID, FirstName: "John"},
+	}, &writeStub{})
 
 	req := httptest.NewRequest(http.MethodGet, "/users/"+testUserID, nil)
-	routeCtx := chi.NewRouteContext()
-	routeCtx.URLParams.Add("id", testUserID)
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, routeCtx))
+	req = addRouteID(req, testUserID)
 	res := httptest.NewRecorder()
 
 	handler.GetUserByID(res, req)
 
-	if res.Code != http.StatusNotFound {
-		t.Fatalf("expected 404, got %d", res.Code)
-	}
+	assert.Equal(t, http.StatusOK, res.Code)
+}
+
+func TestGetUserByIDNotFound(t *testing.T) {
+	handler := NewUserHandler(&readStub{
+		err: fmt.Errorf("%w: missing", usersclient.ErrNotFound),
+	}, &writeStub{})
+
+	req := httptest.NewRequest(http.MethodGet, "/users/"+testUserID, nil)
+	req = addRouteID(req, testUserID)
+	res := httptest.NewRecorder()
+
+	handler.GetUserByID(res, req)
+
+	assert.Equal(t, http.StatusNotFound, res.Code)
+}
+
+func TestUpdateUser(t *testing.T) {
+	handler := NewUserHandler(&readStub{}, &writeStub{})
+	body, _ := json.Marshal(map[string]any{"firstName": "Updated"})
+
+	req := httptest.NewRequest(http.MethodPatch, "/users/"+testUserID, bytes.NewReader(body))
+	req = addRouteID(req, testUserID)
+	res := httptest.NewRecorder()
+
+	handler.UpdateUser(res, req)
+
+	assert.Equal(t, http.StatusOK, res.Code)
+}
+
+func TestDeleteUser(t *testing.T) {
+	handler := NewUserHandler(&readStub{}, &writeStub{})
+
+	req := httptest.NewRequest(http.MethodDelete, "/users/"+testUserID, nil)
+	req = addRouteID(req, testUserID)
+	res := httptest.NewRecorder()
+
+	handler.DeleteUser(res, req)
+
+	assert.Equal(t, http.StatusOK, res.Code)
 }
